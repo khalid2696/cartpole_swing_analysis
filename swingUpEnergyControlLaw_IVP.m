@@ -1,4 +1,4 @@
-% clc; close all; clearvars;
+clc; close all; clearvars;
 
 %% Add directories
 addpath('./lib/');
@@ -10,10 +10,10 @@ end
 
 %Specify the initial state perturbation
 if ~exist('intialStatePerturbation','var')
-    intialStatePerturbation = 1e-3; %1e-2
+    intialStatePerturbation = 5e-3; %1e-2
 end
 
-numSamples = 500;
+numRollouts = 500;
 
 %% Initialisation parameters
 nx = 4; % state-dimensionality 
@@ -67,10 +67,10 @@ N = 100; %number of time instances (discretisation)
 %tspan = [0 15];
 tspan = linspace(0, 10, N);
 
-trajectories = cell(numSamples, 1);
-input_profiles = cell(numSamples, 1);
+trajectories = cell(numRollouts, 1);
+input_profiles = cell(numRollouts, 1);
 
-for i = 1:numSamples
+for i = 1:numRollouts
     x0 = -intialStatePerturbation/2*ones(nx,1) + intialStatePerturbation*rand(nx,1);
     
     % ODE solve
@@ -96,21 +96,21 @@ end
 figure;
 
 subplot(2,2,1); hold on; grid on;
-for i = 1:numSamples
+for i = 1:numRollouts
     x_sol = trajectories{i};
     plot(t_sol, x_sol(1,:), 'b', 'LineWidth', 1.5);
 end
 xlabel('t (s)'); ylabel('Cart Position (m)');
 
 subplot(2,2,2); hold on; grid on;
-for i = 1:numSamples
+for i = 1:numRollouts
     x_sol = trajectories{i};
     plot(t_sol, x_sol(2,:), 'b', 'LineWidth', 1.5);
 end
 xlabel('t (s)'); ylabel('Cart Velocity (m/s)');
 
 subplot(2,2,3); hold on; grid on;
-for i = 1:numSamples
+for i = 1:numRollouts
     x_sol = trajectories{i};
     plot(t_sol, rad2deg(x_sol(3,:)), 'b', 'LineWidth', 1.5);
 end
@@ -119,7 +119,7 @@ yline(180, 'k--', 'Upright');
 xlabel('t (s)'); ylabel('\theta (rad)');
 
 subplot(2,2,4); hold on; grid on;
-for i = 1:numSamples
+for i = 1:numRollouts
     x_sol = trajectories{i};
     plot(t_sol, x_sol(4,:), 'b', 'LineWidth', 1.5);
 end
@@ -132,7 +132,7 @@ plotPhasePortraits(trajectories, intialStatePerturbation, [1 3]);
 
 %% input profiles
 figure; grid on; hold on
-for i = 1:numSamples
+for i = 1:numRollouts
     u_sol = input_profiles{i};
     plot(t_sol, u_sol, 'k-.', 'LineWidth', 1.75);
 end
@@ -206,7 +206,6 @@ function f = cartpole_dynamics(t, x, cartPoleParameters, controlStrategyParamete
     c_theta = cos(theta);
     
     % Common denominator
-    %denom = M + m*(1 - c_theta^2);
     denom = M + m*s_theta^2;
     
     % State derivatives

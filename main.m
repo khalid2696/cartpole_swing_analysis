@@ -32,8 +32,7 @@ run('./utils/checkOpenLoop_IVP.m');
 % x = [p_x; v_x; theta; theta_dot]
 % u = F
 function f = cartpole_dynamics(x, u, cartPoleParameters)
-    % Numerical evaluation of cartpole dynamics
-    
+    % Numerical evaluation of cartpole dynamics  
     
     %extract parameters
     M = cartPoleParameters.M; m = cartPoleParameters.m;
@@ -53,7 +52,6 @@ function f = cartpole_dynamics(x, u, cartPoleParameters)
     c_theta = cos(theta);
     
     % Common denominator
-    %denom = M + m*(1 - c_theta^2);
     denom = M + m*s_theta^2;
     
     % State derivatives
