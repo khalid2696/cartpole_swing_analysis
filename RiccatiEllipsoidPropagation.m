@@ -109,7 +109,7 @@ function [A, B] = get_jacobians(x, u, params)
 end
 
 function K_list = compute_tvlqr_gains(t_nom, x_nom, u_nom, params)
-    Q = diag([10, 1, 50, 1]); R = 0.1; Pf = params.P_f;
+    Q = diag([10, 1, 50, 1]); R = 100; Pf = params.P_f;
     N = length(t_nom);
     
     % For simplicity in this pass, we solve a sequence of discrete LQR
@@ -146,9 +146,9 @@ end
 
 function ds_vec = lyapunov_rhs(t, s_vec, t_nom, x_nom, u_nom, K_feedback, params)
     % Interpolate nominal data
-    xn = interp1(t_nom, x_nom, t)';
-    un = interp1(t_nom, u_nom, t);
-    K = interp1(t_nom, K_feedback, t);
+    xn = interp1(t_nom, x_nom, t, "pchip")';
+    un = interp1(t_nom, u_nom, t, "pchip");
+    K = interp1(t_nom, K_feedback, t, "pchip");
     
     S = reshape(s_vec, [4, 4]);
     [A, B] = get_jacobians(xn, un, params);
@@ -229,7 +229,7 @@ function visualize_reachability(t_nom, x_nom, t_S, S_history)
         S_2d = inv(P_2d);
         
         % Get the center at this time (interpolate from x_nom)
-        center = interp1(t_nom, x_nom, t_curr)';
+        center = interp1(t_nom, x_nom, t_curr, "pchip")';
         c_2d = C * center;
         
         % Draw the 2D Ellipse
