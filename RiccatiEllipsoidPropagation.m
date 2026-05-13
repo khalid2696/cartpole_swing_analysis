@@ -32,7 +32,7 @@ function params = init_params()
     params.x0 = [0; 0; 0; 0];
     params.xf = [0; 0; pi; 0];
     % Set definitions (Ellipsoid S-matrices)
-    params.P_0 = 100*diag([10, 10, 5, 5]); % Example X0 size
+    params.P_0 = 100*diag([10, 0.5, 10, 0.25]); % Example X0 size
     params.P_f = diag([1, 1, 0.5, 0.5]); % Requirement for Xf
 
     %control law gains
@@ -96,27 +96,62 @@ function u = energy_shaping_law(x, params)
     u = max(min(u, params.F_max), -params.F_max);
 end
 
-function [A, B] = get_jacobians(x, u, params)
-    % Finite difference or symbolic derivatives of cartpole_dynamics
-    eps = 1e-6; nx = 4; nu = 1;
-    A = zeros(nx, nx); B = zeros(nx, nu);
-    for i = 1:nx
-        x_plus = x; x_plus(i) = x_plus(i) + eps;
-        A(:,i) = (cartpole_dynamics(0, x_plus, u, params) - cartpole_dynamics(0, x, u, params))/eps;
-    end
-    u_plus = u + eps;
-    B = (cartpole_dynamics(0, x, u_plus, params) - cartpole_dynamics(0, x, u, params))/eps;
+function [A_func, B_func] = get_symbolic_jacobians(params)
+    % Define symbolic variables
+    syms x v theta omega F M m L g real
+    
+    % Dynamics (Your provided equations)
+    s = sin(theta); c = cos(theta);
+    denom = M + m*s^2;
+    
+    f1 = v;
+    f2 = (F + m*L*omega^2*s + m*g*s*c) / denom;
+    f3 = omega;
+    f4 = (-F*c - m*L*omega^2*s*c - (M + m)*g*s) / (L * denom);
+    
+    f_sym = [f1; f2; f3; f4];
+    state = [x; v; theta; omega];
+    
+    % Compute Jacobians
+    A_sym = jacobian(f_sym, state);
+    B_sym = jacobian(f_sym, F);
+    
+    % Convert to fast MATLAB functions
+    % We pass params as a structure to the function
+    A_func = matlabFunction(A_sym, 'Vars', {x, v, theta, omega, F, M, m, L, g});
+    B_func = matlabFunction(B_sym, 'Vars', {x, v, theta, omega, F, M, m, L, g});
 end
 
+% %Changed this into symbolic for numeric stability -- so not required
+% function [A, B] = get_jacobians(x, u, params)
+%     % Finite difference or symbolic derivatives of cartpole_dynamics
+%     eps = 1e-6; nx = 4; nu = 1;
+%     A = zeros(nx, nx); B = zeros(nx, nu);
+%     for i = 1:nx
+%         x_plus = x; x_plus(i) = x_plus(i) + eps;
+%         A(:,i) = (cartpole_dynamics(0, x_plus, u, params) - cartpole_dynamics(0, x, u, params))/eps;
+%     end
+%     u_plus = u + eps;
+%     B = (cartpole_dynamics(0, x, u_plus, params) - cartpole_dynamics(0, x, u, params))/eps;
+% end
+
 function K_list = compute_tvlqr_gains(t_nom, x_nom, u_nom, params)
-    Q = diag([10, 1, 50, 1]); R = 100; Pf = params.P_f;
+    Q = diag([10, 1, 50, 1]); R = 10; Pf = params.P_f;
     N = length(t_nom);
     
+    % Get symbolic jacobian functions
+    [A_func, B_func] = get_symbolic_jacobians(params);
+
     % For simplicity in this pass, we solve a sequence of discrete LQR
     % In a stiff system, you'd solve the Differential Riccati Equation.
     K_list = zeros(N, 4);
     for i = N:-1:1
-        [A, B] = get_jacobians(x_nom(i,:)', u_nom(i), params);
+        % [A, B] = get_jacobians(x_nom(i,:)', u_nom(i), params);
+        A = A_func(x_nom(i,1), x_nom(i,2), x_nom(i,3), x_nom(i,4), u_nom(i),...
+                        params.M, params.m, params.L, params.g);
+        B = B_func(x_nom(i,1), x_nom(i,2), x_nom(i,3), x_nom(i,4), u_nom(i),...
+                        params.M, params.m, params.L, params.g);
+
         % This is a quasi-static approximation for the gains
         if i == N %use P_f for terminal time only
             [K_list(i,:), ~, ~] = lqr(A, B, Pf, R); 
@@ -126,14 +161,18 @@ function K_list = compute_tvlqr_gains(t_nom, x_nom, u_nom, params)
     end
 end
 
+%To Do: enforce this only at level-set boundary: X^T S X = 1
 function [t_S, S_history, S_vec_hist] = propagate_reachability(t_nom, x_nom, u_nom, K_feedback, params)
     
     n_x = size(x_nom,2);
     S0_vec = params.P_0(:);
     
+    % Get symbolic jacobians
+    [A_func, B_func] = get_symbolic_jacobians(params);
+
     % Use ode15s for stiffness handling
     options = odeset('RelTol', 1e-6);
-    [t_S, S_vec_hist] = ode15s(@(t, s) lyapunov_rhs(t, s, t_nom, x_nom, u_nom, K_feedback, params), ...
+    [t_S, S_vec_hist] = ode15s(@(t, s) lyapunov_rhs(t, s, t_nom, x_nom, u_nom, A_func, B_func, K_feedback, params), ...
                                 [t_nom(1) t_nom(end)], S0_vec, options);
     
     N = size(S_vec_hist,1);
@@ -144,18 +183,37 @@ function [t_S, S_history, S_vec_hist] = propagate_reachability(t_nom, x_nom, u_n
 
 end
 
-function ds_vec = lyapunov_rhs(t, s_vec, t_nom, x_nom, u_nom, K_feedback, params)
+function ds_vec = lyapunov_rhs(t, s_vec, t_nom, x_nom, u_nom, A_func, B_func, K_feedback, params)
     % Interpolate nominal data
     xn = interp1(t_nom, x_nom, t, "pchip")';
     un = interp1(t_nom, u_nom, t, "pchip");
     K = interp1(t_nom, K_feedback, t, "pchip");
     
     S = reshape(s_vec, [4, 4]);
-    [A, B] = get_jacobians(xn, un, params);
+    % [A, B] = get_jacobians(xn, un, params);
+    A = A_func(xn(1), xn(2), xn(3), xn(4), un, params.M, params.m, params.L, params.g);
+    B = B_func(xn(1), xn(2), xn(3), xn(4), un, params.M, params.m, params.L, params.g);
+    
     A_cl = A - B * K;
     
     % S-propagation: dS = -(A_cl'*S + S*A_cl)
     dS = -(A_cl' * S + S * A_cl);
+
+    % % New addition: To regularize S propagation
+    % % Calculate a gamma that prevents S from shrinking too much (physical set exploding)
+    % % If eigenvalues of S get too small, gamma pushes them back up.
+    % min_eig_S = min(eig(S));
+    % target_min = 1e-3; % Don't let S eigenvalues drop below this
+    % k_gain = 0.1;
+    % 
+    % gamma = k_gain * (target_min - min_eig_S); 
+    % 
+    % % The updated propagation
+    % dS = dS + gamma * S; 
+    % 
+    % % Symmetry guard
+    % dS = (dS + dS') / 2;
+
     ds_vec = dS(:);
 end
 
