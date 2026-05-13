@@ -1,11 +1,18 @@
 clc; clearvars; close all;
 
+%TO Do: Regualrize the states so to prevent numerical ill-conditioning
+%x_bar = T z_bar
 params = init_params();
 [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params);
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom);
 
-% keyboard
+%temporarily transpose it to be consistent with other script's convention
+t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
+save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
+t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom'; %revert back
+
+% return
 
 K_feedback = compute_tvlqr_gains(t_nom, x_nom, u_nom, params);
 [t_S, S_history, S_vec_history] = propagate_reachability(t_nom, x_nom, u_nom, K_feedback, params);
@@ -36,7 +43,8 @@ function params = init_params()
     params.P_f = diag([1, 1, 0.5, 0.5]); % Requirement for Xf
 
     %control law gains
-    params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;
+    % params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;
+    params.gains.k_e = 2; params.gains.k_p = 0; params.gains.k_d = 0;
     params.gains.K = 0.5*[-10.0000  -16.2819   91.7720   22.6933];
     params.initial_impulse = 3; %in N
     params.controller_switch_angle = 0.8*pi;
@@ -72,7 +80,7 @@ end
 function u = energy_shaping_law(x, params)
     
     % A constant initial impulse to kickstart the energy pumping-based swing-up strategy
-    if norm(x - params.x0) < 1e-2
+    if norm(x - params.x0) < 1e-3
         u = params.initial_impulse;
         return
     end
@@ -86,17 +94,17 @@ function u = energy_shaping_law(x, params)
 
     % Pump energy based on velocity and position
     if abs(x(3)) < params.controller_switch_angle
-        u = k_e * (E - E_up) * x(4) * cos(x(3));
+        u = k_e * (E - E_up) * x(4) * cos(x(3)); 
     else
         u = K*(params.xf - x);
     end
 
-    % PD to keep cart near origin
+    % PD to keep cart near origin: not activated currently! (zero-gains)
     u = u - k_p*x(1) - k_d*x(2);
     u = max(min(u, params.F_max), -params.F_max);
 end
 
-function [A_func, B_func] = get_symbolic_jacobians(params)
+function [A_func, B_func] = get_symbolic_jacobians()
     % Define symbolic variables
     syms x v theta omega F M m L g real
     
@@ -140,7 +148,7 @@ function K_list = compute_tvlqr_gains(t_nom, x_nom, u_nom, params)
     N = length(t_nom);
     
     % Get symbolic jacobian functions
-    [A_func, B_func] = get_symbolic_jacobians(params);
+    [A_func, B_func] = get_symbolic_jacobians();
 
     % For simplicity in this pass, we solve a sequence of discrete LQR
     % In a stiff system, you'd solve the Differential Riccati Equation.
@@ -168,7 +176,7 @@ function [t_S, S_history, S_vec_hist] = propagate_reachability(t_nom, x_nom, u_n
     S0_vec = params.P_0(:);
     
     % Get symbolic jacobians
-    [A_func, B_func] = get_symbolic_jacobians(params);
+    [A_func, B_func] = get_symbolic_jacobians();
 
     % Use ode15s for stiffness handling
     options = odeset('RelTol', 1e-6);
@@ -198,21 +206,6 @@ function ds_vec = lyapunov_rhs(t, s_vec, t_nom, x_nom, u_nom, A_func, B_func, K_
     
     % S-propagation: dS = -(A_cl'*S + S*A_cl)
     dS = -(A_cl' * S + S * A_cl);
-
-    % % New addition: To regularize S propagation
-    % % Calculate a gamma that prevents S from shrinking too much (physical set exploding)
-    % % If eigenvalues of S get too small, gamma pushes them back up.
-    % min_eig_S = min(eig(S));
-    % target_min = 1e-3; % Don't let S eigenvalues drop below this
-    % k_gain = 0.1;
-    % 
-    % gamma = k_gain * (target_min - min_eig_S); 
-    % 
-    % % The updated propagation
-    % dS = dS + gamma * S; 
-    % 
-    % % Symmetry guard
-    % dS = (dS + dS') / 2;
 
     ds_vec = dS(:);
 end

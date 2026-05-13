@@ -4,8 +4,18 @@
 addpath('../lib/');
 
 %% Load the nominal trajectory and LQR gains
-load('../precomputedData/nominalTrajectory.mat');
-load('../precomputedData/LQRGainsAndCostMatrices.mat');
+load('../precomputedData/nominal_trajectory_and_input.mat');
+load('../precomputedData/TVLQR_gains_and_cost_matrices.mat');
+
+fprintf('Running Monte Carlo rollouts for empirical analysis of the closed loop system.\nHang on..\n\n');
+%% Renaming variables to interface with the following script
+
+time_instances = t_nom;
+K = tvlqr.K;
+P = tvlqr.S;
+dynamicsFnHandle = @(x,u) cartpole_dynamics(x, u, params);
+
+%%
 N = length(time_instances);
 
 % -- Status message: Quantities at our disposal now -- %
@@ -98,7 +108,7 @@ for i = 1:numSamples
     x0 = initial_states(:, i);
     %options: Euler, trapezoidal, RK4, (inbuilt) ode15s
     [x_traj, total_input, error, cost] = ...
-        forward_propagate(dynamicsFnHandle, x0, rollout_x_nom, rollout_u_nom, ...
+        forward_propagate(dynamicsFnHandle, params, x0, rollout_x_nom, rollout_u_nom, ...
                             rollout_K, rollout_P, rollout_time_horizon, Ts, 'rk4');
     trajectories{i} = x_traj;
     input_profiles{i} = total_input;
@@ -122,19 +132,52 @@ plot_xy_trajectories(trajectories, rollout_x_nom, initial_state_covariance, x_no
 plot_input_profiles(input_profiles, rollout_time_horizon, u_nom, time_instances);
 % plot_error_metrics(errors, costs, rollout_time_horizon);
 
-clearvars;
-
 %% Function defintions
+
+% Define the system dynamics: cartpole
+% x = [p_x; v_x; theta; theta_dot]
+% u = F
+function f = cartpole_dynamics(x, u, cartPoleParameters)
+    % Numerical evaluation of cartpole dynamics  
+    
+    %extract parameters
+    M = cartPoleParameters.M; m = cartPoleParameters.m;
+    L = cartPoleParameters.L; g = cartPoleParameters.g;
+
+    % Extract states
+    p_x = x(1);
+    v_x = x(2);
+    theta = x(3);
+    omega = x(4);
+    
+    % Control input
+    F = u;
+    
+    % Define trigonometric functions
+    s_theta = sin(theta);
+    c_theta = cos(theta);
+    
+    % Common denominator
+    denom = M + m*s_theta^2;
+    
+    % State derivatives
+    f = [
+        v_x;
+        (F + m*L*omega^2*s_theta + m*g*s_theta*c_theta) / denom;
+        omega;
+        (-F*c_theta - m*L*omega^2*s_theta*c_theta - (M + m)*g*s_theta) / (L * denom)
+    ];
+end
 
 function initial_states = sample_initial_states(mean_state, covariance, num_samples)
     % Samples initial states from an ellipsoid
     initial_states = mvnrnd(mean_state, covariance, num_samples)';
 end
 
-function [x_traj, total_input, errorNorm, costToGoal] = forward_propagate(dynamics, x0, x_nom, u_nom, K, P, time, dt, method)
+function [x_traj, total_input, errorNorm, costToGoal] = forward_propagate(dynamics, params, x0, x_nom, u_nom, K, P, time, dt, method)
     
     %actuator saturation
-    force_limits = [-15, 15];
+    force_limits = [-params.F_max, params.F_max];
 
     % Simulates the unicycle dynamics under TVLQR control
     x_traj = zeros(size(x_nom));
