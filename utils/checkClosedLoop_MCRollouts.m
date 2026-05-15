@@ -1,4 +1,4 @@
-%clc; clearvars; close all
+clc; clearvars; close all
 
 %% Add directories
 addpath('../lib/');
@@ -31,23 +31,21 @@ N = length(time_instances);
 
 %Specify the start time for the rollouts
 if ~exist('startTimeIndex','var')
-    %startTimeIndex = randi(N-1); %should be in between 1 and N-1
     startTimeIndex = 1;
 end
 
 if ~exist('numSamples','var')
-    numSamples = 100; %default number of rollouts
+    numSamples = 500; %default number of rollouts
 end
 
-if exist('startMaxPerturbation','var')
-    rho0 = startMaxPerturbation;
-else
-    rho0 = 0.3; %decrease this for a smaller initial set
+%Sampling initial states from an initial ellipsoidal set
+if ~exist('initialStateSetMatrix', 'var')
+    initialStateSetMatrix = 1*P(:,:,startTimeIndex);
 end
 
 %finer discretization to prevent integration error build-up
 if ~exist('upsamplingFactor','var')
-    upsamplingFactor = 40;
+    upsamplingFactor = 1;
 end
 
 %% Upsample trajectories and matrices for forward rollouts
@@ -67,25 +65,7 @@ time_instances = t_fine;
 
 %% Monte Carlo forward rollouts
 
-% a scaling to vary initial set size based on the time it starts
-% required because we do systems analysis over a *finite-time* horizon
-t0 = time_instances(1); tf = time_instances(end); t_start = time_instances(startTimeIndex);
 Ts = (time_instances(end)-time_instances(1))/(length(time_instances)-1); %sampling-time
-
-c = 3;      %increase this for steeper decrease in rho(t)
-rho = rho0*exp(c*(t_start-t0)/(t0-tf));
-
-%Sampling initial states from an initial ellipsoidal set
-if ~exist('initial_state_covariance', 'var')
-    initial_state_covariance = (1/3)*rho*P(:,:,startTimeIndex)^(-1/2);
-    %mu + 3*sigma will cover 99.7% of the distribution
-    %hence divided by 3
-end
-
-%1/sqrt(eigenvalue of P_k) gives the length of each semi-axis
-% deviation^T P_k deviation = rho
-% and eigen value of P_k^(-1/2) is 1/sqrt(eigenvalue of P_k)
-% that is why, we take P^(-1/2)
 
 rollout_time_horizon = time_instances(startTimeIndex:end);
 rollout_x_nom = x_nom(:,startTimeIndex:end);
@@ -94,24 +74,24 @@ rollout_K     = K(:,:,startTimeIndex:end);
 rollout_P     = P(:,:,startTimeIndex:end);
 
 %sample initial states at random
-mean_intial_state = rollout_x_nom(:,1); %centered around the nominal trajectory
-
-initial_states = sample_initial_states(mean_intial_state, initial_state_covariance, numSamples);
+initialStateSetCenter = rollout_x_nom(:,1); %centered around the nominal trajectory
+initialStates = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, numSamples, 'interior');
+%Two options: 'interior' and 'boundary'
 
 trajectories = cell(numSamples, 1);
-input_profiles = cell(numSamples, 1);
+inputProfiles = cell(numSamples, 1);
 
 errors = zeros(numSamples, length(rollout_time_horizon));
 costs = zeros(numSamples, length(rollout_time_horizon));
 
 for i = 1:numSamples
-    x0 = initial_states(:, i);
+    x0 = initialStates(i, :);
     %options: Euler, trapezoidal, RK4, (inbuilt) ode15s
     [x_traj, total_input, error, cost] = ...
         forward_propagate(dynamicsFnHandle, params, x0, rollout_x_nom, rollout_u_nom, ...
                             rollout_K, rollout_P, rollout_time_horizon, Ts, 'rk4');
     trajectories{i} = x_traj;
-    input_profiles{i} = total_input;
+    inputProfiles{i} = total_input;
     errors(i, :) = error;
     costs(i, :) = cost;
 end
@@ -124,12 +104,8 @@ disp('Plotting trajectories, input profiles, and metrics from MC rollouts..');
 disp(' ');
 
 %plot state trajectories
-plot_xy_trajectories(trajectories, rollout_x_nom, initial_state_covariance, x_nom, [1 3]);
-%plot_xy_trajectories(trajectories, rollout_x_nom, initial_state_covariance, x_nom, [2 4]);
-%plot_xy_trajectories(trajectories, rollout_x_nom, initial_state_covariance, x_nom, [1 2]);
-%plot_xy_trajectories(trajectories, rollout_x_nom, initial_state_covariance, x_nom, [3 4]);
-
-plot_input_profiles(input_profiles, rollout_time_horizon, u_nom, time_instances);
+plot_xy_trajectories(trajectories, rollout_x_nom, initialStateSetMatrix, x_nom, [1 3]);
+plot_input_profiles(inputProfiles, rollout_time_horizon, u_nom, time_instances);
 % plot_error_metrics(errors, costs, rollout_time_horizon);
 
 %% Function defintions
@@ -167,11 +143,6 @@ function f = cartpole_dynamics(x, u, cartPoleParameters)
         omega;
         (-F*c_theta - m*L*omega^2*s_theta*c_theta - (M + m)*g*s_theta) / (L * denom)
     ];
-end
-
-function initial_states = sample_initial_states(mean_state, covariance, num_samples)
-    % Samples initial states from an ellipsoid
-    initial_states = mvnrnd(mean_state, covariance, num_samples)';
 end
 
 function [x_traj, total_input, errorNorm, costToGoal] = forward_propagate(dynamics, params, x0, x_nom, u_nom, K, P, time, dt, method)
@@ -231,6 +202,61 @@ function [x_traj, total_input, errorNorm, costToGoal] = forward_propagate(dynami
     costToGoal(end) = finalStateDeviation' * P(:, :, end) * finalStateDeviation;
 end
 
+function points = sample_points_from_ellipsoid(M, xc, N, type)
+% SAMPLE_ELLIPSE_GENERAL Samples N points from an n-dimensional ellipse
+% Define by: (x - xc)' * M * (x - xc) <= 1
+%
+% Inputs:
+%   M    - n x n symmetric positive-definite matrix
+%   xc   - n x 1 column vector representing the center of the ellipse
+%   N    - Number of points to sample (scalar integer)
+%   type - String, either 'interior' or 'boundary'
+%
+% Output:
+%   points - N x n matrix where each row is an n-dimensional sampled point
+
+    % 1. Validate inputs and dimensions
+    [n, m] = size(M);
+    if n ~= m || any(eig(M) <= 0)
+        error('M must be a square, symmetric positive-definite matrix.');
+    end
+    
+    xc = xc(:); % Ensure xc is a column vector
+    if length(xc) ~= n
+        error('Dimensions of M and xc must match.');
+    end
+    
+    type = lower(type);
+    if ~strcmp(type, 'interior') && ~strcmp(type, 'boundary')
+        error('Type must be either ''interior'' or ''boundary''.');
+    end
+
+    % 2. Compute Cholesky decomposition of the inverse matrix
+    % M^-1 = L * L' -> L maps a unit hypersphere to the target hyper-ellipse
+    Minv = inv(M);
+    L = chol(Minv, 'lower');
+
+    % 3. Generate random points on an n-dimensional unit hypersphere surface
+    % Standard normal distributions yield uniformly distributed directions
+    z = randn(N, n); 
+    norms = sqrt(sum(z.^2, 2));
+    u_surface = z ./ norms; % Project points onto the exact surface (norm = 1)
+
+    % 4. Apply radial scaling based on selection type
+    if strcmp(type, 'interior')
+        % In n-dimensions, volume scales with r^n.
+        % To keep density uniform, we take the n-th root of a uniform variable.
+        r = rand(N, 1).^(1 / n);
+        u = u_surface .* r; % Scale points into the interior ball
+    else
+        u = u_surface; % Keep points on the exact boundary sphere
+    end
+
+    % 5. Transform unit ball/sphere points to the final hyper-ellipse
+    % Transposed math: points = (L * u')' + xc' -> points = u * L' + xc'
+    points = u * L' + xc';
+end
+
 %Interpolates state and control vectors
 function [x_fine, u_fine, t_fine] = upsample_state_control_trajectories(t_coarse, x_coarse, u_coarse, t_fine)
 
@@ -243,12 +269,12 @@ function [x_fine, u_fine, t_fine] = upsample_state_control_trajectories(t_coarse
 
     % Interpolate each row (dimension) of x with cubic spline
     for i = 1:n
-        x_fine(i, :) = interp1(t_coarse, x_coarse(i, :), t_fine, 'spline'); % Cubic interpolation
+        x_fine(i, :) = interp1(t_coarse, x_coarse(i, :), t_fine, 'pchip'); % Cubic interpolation
     end
 
     % Interpolate each row (dimension) of u with linear interpolation
     for i = 1:m
-        u_fine(i, :) = interp1(t_coarse, u_coarse(i, :), t_fine, 'linear'); % Linear interpolation
+        u_fine(i, :) = interp1(t_coarse, u_coarse(i, :), t_fine, 'pchip'); % Linear interpolation
     end
 end
 
@@ -292,15 +318,13 @@ function plot_xy_trajectories(trajectories, rollout_x_nom, covariance, complete_
     cov_2d = P.project_ellipsoid_matrix_2D(covariance, projectionDims); % Extract 2D covariance
     [eig_vec, eig_val] = eig(cov_2d);
     
-    theta = linspace(0, 2*pi, 100); % Parameterize ellipse
-    %mu + 3*sigma will cover 99.7% of the distribution
-    %std dev, sigma = sqrt(covariance)
-    ellipse_boundary = 3*eig_val^(1/2) * [cos(theta); sin(theta)];
+    theta = linspace(0, 2*pi, 100);
+    ellipse_boundary = eig_val^(-1/2) * [cos(theta); sin(theta)];
     rotated_ellipse = eig_vec * ellipse_boundary;
     
     plot(ellipse_center(1) + rotated_ellipse(1, :), ...
          ellipse_center(2) + rotated_ellipse(2, :), ...
-         'k-.', 'LineWidth', 1.2);
+         'm-.', 'LineWidth', 1.5);
 
     xlabel(['x_{', num2str(projectionDims(1)), '}'])
     ylabel(['x_{', num2str(projectionDims(2)), '}'])

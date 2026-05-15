@@ -41,7 +41,7 @@ load('./precomputedData/nominal_trajectory_and_input.mat');
 
 load('./precomputedData/TVLQR_gains_and_cost_matrices.mat');
 
-% numSamples = 50;
+% numSamples = 100;
 % run('./utils/checkClosedLoop_MCRollouts.m');
 
 %% ── Inputs ───────────────────────────────────────────────────
