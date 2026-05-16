@@ -35,13 +35,20 @@ if ~exist('startTimeIndex','var')
 end
 
 if ~exist('numSamples','var')
-    numSamples = 500; %default number of rollouts
+    numSamples = 1000; %default number of rollouts
 end
 
 %Sampling initial states from an initial ellipsoidal set
 if ~exist('initialStateSetMatrix', 'var')
-    initialStateSetMatrix = 1*P(:,:,startTimeIndex);
+    % initialStateSetMatrix = 1*P(:,:,startTimeIndex);
+    initialStateSetMatrix = 121.4437 * eye(4);
 end
+
+if ~exist('finalStateSetMatrix', 'var') || ~exist('finalStateSetCenter', 'var')
+    finalStateSetCenter = [0 0 pi 0]';
+    finalStateSetMatrix = 192.2777 * eye(4);
+end
+
 
 %finer discretization to prevent integration error build-up
 if ~exist('upsamplingFactor','var')
@@ -84,6 +91,8 @@ inputProfiles = cell(numSamples, 1);
 errors = zeros(numSamples, length(rollout_time_horizon));
 costs = zeros(numSamples, length(rollout_time_horizon));
 
+success = NaN(numSamples,1);
+
 for i = 1:numSamples
     x0 = initialStates(i, :);
     %options: Euler, trapezoidal, RK4, (inbuilt) ode15s
@@ -94,8 +103,12 @@ for i = 1:numSamples
     inputProfiles{i} = total_input;
     errors(i, :) = error;
     costs(i, :) = cost;
+
+    % Compute the success of being within the user-specified terminal set
+    success(i) = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix);
 end
 
+successRate = mean(success);
 disp('-- End of Monte Carlo forward rollouts --');
 disp(' ');
 
@@ -104,10 +117,16 @@ disp('Plotting trajectories, input profiles, and metrics from MC rollouts..');
 disp(' ');
 
 %plot state trajectories
-plot_xy_trajectories(trajectories, rollout_x_nom, initialStateSetMatrix, x_nom, [1 3]);
+projectionDims = [1 3]; 
+plot_xy_trajectories(trajectories, rollout_x_nom, initialStateSetMatrix, x_nom, projectionDims);
+plot_terminal_set(finalStateSetCenter, finalStateSetMatrix, projectionDims);
+title(compose('Monte Carlo Rollouts, Success rate = %.2f from %d samples', successRate, numSamples));
+
+%Plot input profile
 plot_input_profiles(inputProfiles, rollout_time_horizon, u_nom, time_instances);
 % plot_error_metrics(errors, costs, rollout_time_horizon);
 
+fprintf("Success rate of final state being within the specified terminal set is %.2f (from %d MC rollouts)\n",successRate,numSamples);
 %% Function defintions
 
 % Define the system dynamics: cartpole
@@ -257,6 +276,16 @@ function points = sample_points_from_ellipsoid(M, xc, N, type)
     points = u * L' + xc';
 end
 
+% Outputs 1 if final state of rollout trajectory is within the user-specified terminal set
+function success = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix)
+    if (x_traj(:,end) - finalStateSetCenter)' * finalStateSetMatrix * (x_traj(:,end) - finalStateSetCenter) < 1
+        success = 1;
+    else
+        success = 0;
+    end
+
+end
+
 %Interpolates state and control vectors
 function [x_fine, u_fine, t_fine] = upsample_state_control_trajectories(t_coarse, x_coarse, u_coarse, t_fine)
 
@@ -294,7 +323,7 @@ function M_fine = upsample_matrix(M_coarse, t_coarse, t_fine)
     end
 end
 
-function plot_xy_trajectories(trajectories, rollout_x_nom, covariance, complete_x_nom, projectionDims)
+function plot_xy_trajectories(trajectories, rollout_x_nom, initialSet, complete_x_nom, projectionDims)
     % Plot all trajectories and nominal trajectory
     figure; hold on; grid on; axis equal;
     
@@ -314,23 +343,41 @@ function plot_xy_trajectories(trajectories, rollout_x_nom, covariance, complete_
     plot(complete_x_nom(projectionDims(1), :), complete_x_nom(projectionDims(2), :), 'k--', 'LineWidth', 2);
     
     %plot initial sampling set
-    ellipse_center = [rollout_x_nom(projectionDims(1),1), rollout_x_nom(projectionDims(2),1)]';
-    cov_2d = P.project_ellipsoid_matrix_2D(covariance, projectionDims); % Extract 2D covariance
-    [eig_vec, eig_val] = eig(cov_2d);
+    projected_ellipse_center = [rollout_x_nom(projectionDims(1),1), rollout_x_nom(projectionDims(2),1)]';
+    projected_inlet = P.project_ellipsoid_matrix_2D(initialSet, projectionDims); % Extract 2D covariance
+    [eig_vec, eig_val] = eig(projected_inlet);
     
     theta = linspace(0, 2*pi, 100);
     ellipse_boundary = eig_val^(-1/2) * [cos(theta); sin(theta)];
     rotated_ellipse = eig_vec * ellipse_boundary;
     
-    plot(ellipse_center(1) + rotated_ellipse(1, :), ...
-         ellipse_center(2) + rotated_ellipse(2, :), ...
+    plot(projected_ellipse_center(1) + rotated_ellipse(1, :), ...
+         projected_ellipse_center(2) + rotated_ellipse(2, :), ...
          'm-.', 'LineWidth', 1.5);
 
     xlabel(['x_{', num2str(projectionDims(1)), '}'])
     ylabel(['x_{', num2str(projectionDims(2)), '}'])
-    title('Monte Carlo Rollout Trajectories');
-    legend('Nominal Trajectory','Sample Trajectories','Sample Initial states','Location','best');
+
+    legend('Nominal Trajectory','Rollout Trajectories','Sampled Initial states','Location','best');
     %hold off;
+end
+
+function plot_terminal_set(center, ellipsoidMatrix, projectionDims)
+ 
+    P = plottingFnsClass();
+
+    projected_ellipse_center = [center(projectionDims(1)), center(projectionDims(2))]';
+    projected_matrix = P.project_ellipsoid_matrix_2D(ellipsoidMatrix, projectionDims); % Extract 2D covariance
+    [eig_vec, eig_val] = eig(projected_matrix);
+    
+    theta = linspace(0, 2*pi, 100);
+    ellipse_boundary = eig_val^(-1/2) * [cos(theta); sin(theta)];
+    rotated_ellipse = eig_vec * ellipse_boundary;
+    
+    plot(projected_ellipse_center(1) + rotated_ellipse(1, :), ...
+         projected_ellipse_center(2) + rotated_ellipse(2, :), ...
+         'r-', 'LineWidth', 1.5, 'DisplayName', 'Terminal Set');
+    plot(projected_ellipse_center(1), projected_ellipse_center(2), 'xk','MarkerSize',5, 'DisplayName', 'Terminal State');
 end
 
 function plot_state_trajectories(trajectories, rollout_time_instances, rollout_x_nom, stateDims)

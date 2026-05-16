@@ -25,8 +25,8 @@ P_bounding = compute_bounding_ellipsoid(ellipsoids);
 plot_ellipse(P_bounding, [0 0 0], 'Bounding Sphere');
 
 % 3. Construct the Contained Ellipsoid (Sphere) and Plot
-P_bounding = compute_contained_ellipsoid(ellipsoids);
-plot_ellipse(P_bounding, [0 1 0], 'Contained Sphere');
+P_contained = compute_contained_ellipsoid(ellipsoids);
+plot_ellipse(P_contained, [0 1 0], 'Contained Sphere');
 
 legend('show');
 title('Outer Bound and Inner Bound via Minimum and Maximum Eigenvalues');
@@ -47,7 +47,7 @@ function P_bounding = compute_bounding_ellipsoid(ellipsoids)
     P_bounding = lambda_star * eye(n);
 end
 
-function P_bounding = compute_contained_ellipsoid(ellipsoids)
+function P_contained = compute_contained_ellipsoid(ellipsoids)
     
     N = numel(ellipsoids);
     n = size(ellipsoids{1},1); %assuming all ellipsoids of the same dimensionality
@@ -59,7 +59,7 @@ function P_bounding = compute_contained_ellipsoid(ellipsoids)
     end
 
     lambda_star = max(all_max_eigs);
-    P_bounding = lambda_star * eye(n);
+    P_contained = lambda_star * eye(n);
 end
 
 function plot_ellipse(P, color, name)
@@ -71,5 +71,5 @@ function plot_ellipse(P, color, name)
     ellipse_pts = P^(-1/2) * circle;
     
     plot(ellipse_pts(1,:), ellipse_pts(2,:), 'Color', color, ...
-        'LineWidth', 2, 'DisplayName', name);
+        'LineWidth', 1.5, 'DisplayName', name);
 end
