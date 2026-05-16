@@ -6,30 +6,61 @@ N = 4; % Number of ellipses
 colors = lines(N);
 
 figure; hold on; grid on; axis equal;
-all_min_eigs = zeros(N, 1);
 
-% 1. Generate and Plot random ellipses
+ellipsoids = cell(N,1);
+% 1. Generate and plot random ellipses
 for i = 1:N
     % Generate a random SPD matrix P
     [Q, ~] = qr(randn(n));
     L = diag(rand(n,1) * 5 + 1); 
     P = Q * L * Q'; % P = R^T * Lambda * R
     
-    % Store the minimum eigenvalue
-    all_min_eigs(i) = min(eig(P));
+    ellipsoids{i} = P;
     
-    % Plot the ellipse
-    plot_ellipse(P, colors(i,:), sprintf('Ellipse %d', i));
+    plot_ellipse(ellipsoids{i}, colors(i,:), sprintf('Ellipse %d', i));
 end
 
-% 2. Construct the Safe Bounding Ellipsoid (Sphere)
-lambda_star = min(all_min_eigs);
-P_safe = lambda_star * eye(n);
+% 2. Construct the Bounding Ellipsoid (Sphere) and Plot
+P_bounding = compute_bounding_ellipsoid(ellipsoids);
+plot_ellipse(P_bounding, [0 0 0], 'Bounding Sphere');
 
-% 3. Plot the Safe Bound
-plot_ellipse(P_safe, [0 0 0], 'Safe Bounding Sphere');
+% 3. Construct the Contained Ellipsoid (Sphere) and Plot
+P_bounding = compute_contained_ellipsoid(ellipsoids);
+plot_ellipse(P_bounding, [0 1 0], 'Contained Sphere');
+
 legend('show');
-title('Outer Bound via Minimum Eigenvalue');
+title('Outer Bound and Inner Bound via Minimum and Maximum Eigenvalues');
+
+%% Function definitions
+function P_bounding = compute_bounding_ellipsoid(ellipsoids)
+    
+    N = numel(ellipsoids);
+    n = size(ellipsoids{1},1); %assuming all ellipsoids of the same dimensionality
+    all_min_eigs = zeros(N, 1);
+
+    for i = 1:N
+        tempEllipsoidMatrix = ellipsoids{i}; 
+        all_min_eigs(i) = min(eig(tempEllipsoidMatrix));
+    end
+
+    lambda_star = min(all_min_eigs);
+    P_bounding = lambda_star * eye(n);
+end
+
+function P_bounding = compute_contained_ellipsoid(ellipsoids)
+    
+    N = numel(ellipsoids);
+    n = size(ellipsoids{1},1); %assuming all ellipsoids of the same dimensionality
+    all_max_eigs = zeros(N, 1);
+
+    for i = 1:N
+        tempEllipsoidMatrix = ellipsoids{i}; 
+        all_max_eigs(i) = max(eig(tempEllipsoidMatrix));
+    end
+
+    lambda_star = max(all_max_eigs);
+    P_bounding = lambda_star * eye(n);
+end
 
 function plot_ellipse(P, color, name)
     theta = linspace(0, 2*pi, 100);
