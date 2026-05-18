@@ -5,27 +5,27 @@ params = init_params();
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom);
 
-%temporarily transpose it to be consistent with other script's convention
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
 save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
-t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom'; %revert back
 
+% t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom'; %revert back
+% 
 % return
-
-K_feedback = compute_tvlqr_gains(t_nom, x_nom, u_nom, params);
-[t_S, S_history, S_vec_history] = propagate_reachability(t_nom, x_nom, u_nom, K_feedback, params);
-
-% Visualise the nominal trajectory along with Riccati solution level-sets
-visualize_reachability(t_nom, x_nom, t_S, S_vec_history);
-
-% Final Check
-Sf_final = S_history(:,:,end);
-% Check if the reachable ellipsoid is contained within the target set
-% Condition: x' * Sf_final * x <= 1  IMPLIES  x' * P_f * x <= 1
-% Matrix form: P_f <= Sf_final (in the sense of Loewner order)
-is_contained = all(eig(Sf_final - params.P_f) >= -1e-5);
-
-fprintf('Reachability Verified: %s\n', char(string(is_contained)));
+% 
+% K_feedback = compute_tvlqr_gains(t_nom, x_nom, u_nom, params);
+% [t_S, S_history, S_vec_history] = propagate_reachability(t_nom, x_nom, u_nom, K_feedback, params);
+% 
+% % Visualise the nominal trajectory along with Riccati solution level-sets
+% visualize_reachability(t_nom, x_nom, t_S, S_vec_history);
+% 
+% % Final Check
+% Sf_final = S_history(:,:,end);
+% % Check if the reachable ellipsoid is contained within the target set
+% % Condition: x' * Sf_final * x <= 1  IMPLIES  x' * P_f * x <= 1
+% % Matrix form: P_f <= Sf_final (in the sense of Loewner order)
+% is_contained = all(eig(Sf_final - params.P_f) >= -1e-5);
+% 
+% fprintf('Reachability Verified: %s\n', char(string(is_contained)));
 
 %% Function definitions
 
@@ -230,6 +230,14 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom)
     xlabel('t (s)'); ylabel('\theta dot (rad/s)');
     
     sgtitle('Cart-Pole State Trajectories');
+    
+    % x-theta trajectory
+    figure; grid on; hold on; axis equal;
+    plot(x_nom(:,1), x_nom(:,3), 'b--', 'LineWidth', 1.5);
+    xlabel('Cart Position (m)'); ylabel('\theta (rad)');
+    plot(x_nom(1,1), x_nom(1,3), 'sg', 'MarkerSize', 7, 'LineWidth', 1.5);
+    plot(x_nom(end,1), x_nom(end,3), 'xr', 'MarkerSize', 7, 'LineWidth', 1.5);
+    title('x-\theta');
 
     % input profile
     figure; grid on; hold on

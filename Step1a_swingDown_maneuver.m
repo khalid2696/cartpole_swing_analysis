@@ -1,6 +1,7 @@
 clc; clearvars; close all;
 
 params = init_params();
+
 [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params);
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom);
@@ -14,20 +15,18 @@ save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_no
 function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
-    params.tspan = [0 15]; % 6 seconds for a "gentle" swing down
+    params.tspan = [0 10]; % 6 seconds for a "gentle" swing down
     % Initial and Final Centers
     params.x0 = [0; 0; pi; 0];
     params.xf = [0; 0; 0; 0];
     % Set definitions (Ellipsoid S-matrices)
-    params.P_0 = 100*diag([10, 0.5, 10, 0.25]); % Example X0 size
-    params.P_f = diag([1, 1, 0.5, 0.5]); % Requirement for Xf
+    params.Q = diag([10, 1, 100, 1]);
+    params.R = 5;
 
     %control law gains
-    % params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;
-    % params.gains.k_e = 2; params.gains.k_p = 0; params.gains.k_d = 0;
-    params.gains.K = 1*[2, 3, -20.0, -10];
-    params.initial_impulse = -0.001; %in N
-    params.controller_switch_angle = 0.2*pi;
+    params.gains.K = compute_attractor_gain(params);
+    params.initial_impulse = -0.01; %in N
+    params.controller_switch_angle = 0.2*pi; %the tuned attractor is considering only the bottom hanging position
 end
 
 function dx = cartpole_dynamics(t, x, u, params)
@@ -38,6 +37,18 @@ function dx = cartpole_dynamics(t, x, u, params)
     f2 = (u + params.m*params.L*omega^2*s + params.m*params.g*s*c) / denom;
     f4 = (-u*c - params.m*params.L*omega^2*s*c - (params.M+params.m)*params.g*s) / (params.L * denom);
     dx = [v; f2; omega; f4];
+end
+
+function K = compute_attractor_gain(params)
+    M = params.M; m= params.m; L = params.L; g = params.g;
+
+    A = [0 1 0 0; 0 0 m*g/M 0; 0 0 0 1; 0 0 -(M+m)*g/(M*L) 0];
+    B = [0; 1/M; 0; -1/(M*L)];
+
+    Q = params.Q;   % penalise theta heavily
+    R = params.R;
+
+    K = lqr(A,B,Q,R);
 end
 
 function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
@@ -119,6 +130,14 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom)
     xlabel('t (s)'); ylabel('\theta dot (rad/s)');
     
     sgtitle('Cart-Pole State Trajectories');
+    
+    % x-theta trajectory
+    figure; grid on; hold on; axis equal;
+    plot(x_nom(:,1), x_nom(:,3), 'b--', 'LineWidth', 1.5);
+    plot(x_nom(1,1), x_nom(1,3), 'sg', 'MarkerSize', 7, 'LineWidth', 1.5);
+    plot(x_nom(end,1), x_nom(end,3), 'xr', 'MarkerSize', 7, 'LineWidth', 1.5);
+    xlabel('Cart Position (m)'); ylabel('\theta (rad)');
+    title('x-\theta');
 
     % input profile
     figure; grid on; hold on
