@@ -29,7 +29,7 @@ addpath("./lib/");
 %% ── Initialization: nominal trajectory and TVLQR feedback gains
 
 % Load the nominal trajectory and feedforward control, and 
-load('./precomputedData/nominal_trajectory_and_input.mat');
+load('./precomputedData/swing_up/nominal_trajectory_and_input.mat');
 
 % Run and save only once -- after that only use stored values 
 % % Compute the TVLQR gains
@@ -39,15 +39,15 @@ load('./precomputedData/nominal_trajectory_and_input.mat');
 % tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
 % save('./precomputedData/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
 
-load('./precomputedData/TVLQR_gains_and_cost_matrices.mat');
+load('./precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat');
 
 % numSamples = 100;
 % run('./utils/checkClosedLoop_MCRollouts.m');
 
 %% ── Inputs ───────────────────────────────────────────────────
 
-eps0  = 0.01;        % initial ellipsoid size -- start small, grow until it fails
-eps_f = 0.1;         % terminal ellipsoid size -- your choice based on X_f spec
+eps0  = 1e-4;        % initial ellipsoid size -- start small, grow until it fails
+eps_f = 1/192.2777;         % terminal ellipsoid size -- your choice based on X_f spec
 P_f   = eye(4);      % shape of X_f -- replace with your actual terminal set matrix
 
 %% ── 0. Fine grid setup ───────────────────────────────────────────────────

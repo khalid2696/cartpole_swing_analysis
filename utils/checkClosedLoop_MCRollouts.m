@@ -4,8 +4,8 @@ clc; clearvars; close all
 addpath('../lib/');
 
 %% Load the nominal trajectory and LQR gains
-load('../precomputedData/nominal_trajectory_and_input.mat');
-load('../precomputedData/TVLQR_gains_and_cost_matrices.mat');
+load('../precomputedData/swing_up/nominal_trajectory_and_input.mat');
+load('../precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat');
 
 fprintf('Running Monte Carlo rollouts for empirical analysis of the closed loop system.\nHang on..\n\n');
 %% Renaming variables to interface with the following script
