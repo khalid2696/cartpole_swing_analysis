@@ -40,13 +40,21 @@ end
 
 %Sampling initial states from an initial ellipsoidal set
 if ~exist('initialStateSetMatrix', 'var')
-    % initialStateSetMatrix = 1*P(:,:,startTimeIndex);
-    initialStateSetMatrix = 121.4437 * eye(4);
+    % For swing-up:
+    initialStateSetMatrix = 121.4437 * eye(4); %for swing-up
+    
+    % % For swing-down:
+    % initialStateSetMatrix = 553.8465 * eye(4); %for swing-up
 end
 
 if ~exist('finalStateSetMatrix', 'var') || ~exist('finalStateSetCenter', 'var')
+    % For swing-up:
     finalStateSetCenter = [0 0 pi 0]';
-    finalStateSetMatrix = 192.2777 * eye(4);
+    finalStateSetMatrix = 192.2777 * eye(4); %for swing-up
+    
+    % % For swing-down:
+    % finalStateSetCenter = [0 0 0 0]';
+    % finalStateSetMatrix = 33.1433 * eye(4); %for swing-down
 end
 
 

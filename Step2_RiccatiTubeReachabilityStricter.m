@@ -28,21 +28,9 @@ clc; clearvars; close all
 addpath("./lib/");
 %% ── Initialization: nominal trajectory and TVLQR feedback gains
 
-% Load the nominal trajectory and feedforward control, and 
-load('./precomputedData/swing_up/nominal_trajectory_and_input.mat');
-
-% Run and save only once -- after that only use stored values 
-% % Compute the TVLQR gains
-% Q = diag([10, 1, 100, 1]);   % penalise theta heavily
-% R = 0.01;
-% 
-% tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
-% save('./precomputedData/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
-
-load('./precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat');
-
-% numSamples = 100;
-% run('./utils/checkClosedLoop_MCRollouts.m');
+% Load the nominal trajectory and feedback control, and 
+load('./precomputedData/swing_down/nominal_trajectory_and_input.mat');
+load('./precomputedData/swing_down/TVLQR_gains_and_cost_matrices.mat');
 
 %% ── Inputs ───────────────────────────────────────────────────
 

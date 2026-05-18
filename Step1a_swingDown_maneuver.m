@@ -2,13 +2,26 @@ clc; clearvars; close all;
 
 params = init_params();
 
+%% Compute nominal trajectory and associated nominal control
 [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params);
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom);
 
 %temporarily transpose it to be consistent with other script's convention
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
-save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
+save('./precomputedData/swing_down/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
+
+%% Compute a stabilizing TVLQR feedback controller
+% Load the nominal trajectory and feedforward control, and 
+load('./precomputedData/swing_down/nominal_trajectory_and_input.mat');
+
+% Run and save only once -- after that only use stored values 
+% Compute the TVLQR gains
+Q = diag([10, 1, 100, 1]);   % penalise theta heavily
+R = 0.01;
+
+tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
+save('./precomputedData/swing_down/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
 
 %% Function definitions
 

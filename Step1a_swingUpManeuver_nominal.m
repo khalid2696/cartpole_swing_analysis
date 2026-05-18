@@ -1,31 +1,26 @@
 clc; clearvars; close all;
 
 params = init_params();
+
+%% Compute nominal trajectory and associated nominal control
 [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params);
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom);
 
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
-save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
+save('./precomputedData/swing_up/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
 
-% t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom'; %revert back
-% 
-% return
-% 
-% K_feedback = compute_tvlqr_gains(t_nom, x_nom, u_nom, params);
-% [t_S, S_history, S_vec_history] = propagate_reachability(t_nom, x_nom, u_nom, K_feedback, params);
-% 
-% % Visualise the nominal trajectory along with Riccati solution level-sets
-% visualize_reachability(t_nom, x_nom, t_S, S_vec_history);
-% 
-% % Final Check
-% Sf_final = S_history(:,:,end);
-% % Check if the reachable ellipsoid is contained within the target set
-% % Condition: x' * Sf_final * x <= 1  IMPLIES  x' * P_f * x <= 1
-% % Matrix form: P_f <= Sf_final (in the sense of Loewner order)
-% is_contained = all(eig(Sf_final - params.P_f) >= -1e-5);
-% 
-% fprintf('Reachability Verified: %s\n', char(string(is_contained)));
+%% Compute a stabilizing TVLQR feedback controller
+% Load the nominal trajectory and feedforward control, and 
+load('./precomputedData/swing_up/nominal_trajectory_and_input.mat');
+
+% Run and save only once -- after that only use stored values 
+% Compute the TVLQR gains
+Q = diag([10, 1, 100, 1]);   % penalise theta heavily
+R = 0.01;
+
+tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
+save('./precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
 
 %% Function definitions
 
