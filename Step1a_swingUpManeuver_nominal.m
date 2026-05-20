@@ -22,6 +22,8 @@ R = 0.01;
 tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
 save('./precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
 
+run('./utils/checkClosedLoop_MCRollouts.m');
+
 %% Function definitions
 
 function params = init_params()
@@ -31,9 +33,10 @@ function params = init_params()
     % Initial and Final Centers
     params.x0 = [0; 0; 0; 0];
     params.xf = [0; 0; pi; 0];
-    % Set definitions (Ellipsoid S-matrices)
-    params.P_0 = 100*diag([10, 0.5, 10, 0.25]); % Example X0 size
-    params.P_f = diag([1, 1, 0.5, 0.5]); % Requirement for Xf
+    
+    % % Set definitions (Ellipsoid S-matrices)
+    % params.P_0 = 100*diag([10, 0.5, 10, 0.25]); % Example X0 size
+    % params.P_f = diag([1, 1, 0.5, 0.5]); % Requirement for Xf
 
     %control law gains
     % params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;

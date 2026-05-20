@@ -29,14 +29,13 @@ addpath("./lib/");
 %% ── Initialization: nominal trajectory and TVLQR feedback gains
 
 % Load the nominal trajectory and feedback control, and 
-load('./precomputedData/swing_down/nominal_trajectory_and_input.mat');
-load('./precomputedData/swing_down/TVLQR_gains_and_cost_matrices.mat');
+load('./precomputedData/nominal_trajectory_and_input.mat');
+load('./precomputedData/TVLQR_gains_and_cost_matrices.mat');
 
 %% ── Inputs ───────────────────────────────────────────────────
 
-eps0  = 1e-4;        % initial ellipsoid size -- start small, grow until it fails
-eps_f = 1/192.2777;         % terminal ellipsoid size -- your choice based on X_f spec
-P_f   = eye(4);      % shape of X_f -- replace with your actual terminal set matrix
+eps0  = 1;                % initial ellipsoid size -- start small, grow until it fails
+P_f   = 192.2777*eye(4);  % shape of X_f -- replace with your actual terminal set matrix
 
 %% ── 0. Fine grid setup ───────────────────────────────────────────────────
 
@@ -50,6 +49,8 @@ fprintf('Time horizon: [%.3f, %.3f] s,  N_fine = %d\n', t0, tf, N_fine);
 
 %% ── 1. Interpolate S(t), K(t), x_nom(t), u_nom(t) ───────────────────────
 % S is [4x4xN], K is [1x4xN] -- reshape to 2-D for interp1 then reshape back
+
+tvlqr.S(:,:,1) = 121.4437 * eye(4); %change to the inlet (observed from the library)
 
 nS = size(tvlqr.S, 1);   % = 4
 nK = size(tvlqr.K, 1);   % = 1 (scalar input)
@@ -133,11 +134,11 @@ end
 %  of A(t,x), evaluated via a second finite difference in x.
 
 Q        = tvlqr.Q;
-lmin_Q   = min(eig(Q));   % scalar, constant
+eig_min_Q   = min(eig(Q));   % scalar, constant
 
 alpha_fine = zeros(1, N_fine);
 beta_fine  = zeros(1, N_fine);
-lmin_S     = zeros(1, N_fine);
+eig_min_S  = zeros(1, N_fine);
 
 eps_fd2 = 1e-4;   % larger step for second-order FD (A changes slowly)
 
@@ -146,13 +147,12 @@ for k = 1:N_fine
     xk  = xnom_fine(:, k);
     uk  = unom_fine(k);
 
-    ev_S      = eig(Sk);
-    lmax_S_k  = max(ev_S);
-    lmin_S_k  = min(ev_S);
-    lmin_S(k) = lmin_S_k;
+    eig_max_Sk  = max(eig(Sk));
+    eig_min_Sk  = min(eig(Sk));
+    eig_min_S(k) = eig_min_Sk;
 
     % alpha(t)
-    alpha_fine(k) = lmin_Q / lmax_S_k;
+    alpha_fine(k) = eig_min_Q / eig_max_Sk;
 
     % L2(t): estimate ||d^2 f / dx^2|| via second FD of f w.r.t. x
     % Use the Frobenius norm of the finite-difference Hessian row-by-row
@@ -168,7 +168,8 @@ for k = 1:N_fine
 
     % beta(t)
     normS_k       = norm(Sk, 2);   % spectral norm = lambda_max(S)
-    beta_fine(k)  = normS_k * L2_k / lmin_S_k;
+    % beta_fine(k)  = normS_k * L2_k / (eig_min_Sk);
+    beta_fine(k) = 0;
 end
 
 fprintf('alpha and beta computed.\n');
@@ -216,14 +217,12 @@ Stf     = S_fine(:,:,end);
 rho_tf  = rho_fine(end);
 
 % Build the matrix to check: eps_f * S(tf) - rho(tf) * inv(P_f)
-M_check = eps_f * Stf - rho_tf * inv(P_f);
-ev_check = eig(M_check);
-certified = all(ev_check >= -1e-8);   % allow small numerical tolerance
+M_check = Stf/rho_tf - P_f;
+certified = all(eig(M_check) >= -1e-8);   % allow small numerical tolerance
 
 fprintf('\n─── Containment Check ───────────────────────────────────\n');
 fprintf('  rho(tf)              = %.6f\n', rho_tf);
-fprintf('  eps_f                = %.6f\n', eps_f);
-fprintf('  min eig(M_check)     = %.6e\n', min(ev_check));
+fprintf('  min eig(M_check)     = %.6e\n', min(eig(M_check)));
 if certified
     fprintf('  RESULT: ✓  E(tf;rho(tf)) ⊆ Xf  -- reachability CERTIFIED\n');
 else
@@ -239,7 +238,7 @@ figure('Name','Riccati Tube Analysis','NumberTitle','off');
 % ── 7a. rho(t) ──
 subplot(2,2,1);
 plot(t_fine, rho_fine, 'b-', 'LineWidth', 1.5); hold on;
-yline(eps_f, 'r--', '\epsilon_f', 'LabelHorizontalAlignment','left');
+%yline(eps_f, 'r--', '\epsilon_f', 'LabelHorizontalAlignment','left');
 xlabel('Time (s)'); ylabel('\rho(t)');
 title('Ellipsoid Scale \rho(t)');
 legend('\rho(t)','\epsilon_f','Location','northwest');
@@ -259,7 +258,7 @@ grid on;
 % ── 7c. Tube width along each state dimension ──
 % Tube half-width in state i: sqrt(rho(t) / (e_i' S(t) e_i))
 subplot(2,2,3);
-state_labels = {'x_c (m)', '\dot{x}_c (m/s)', '\theta (rad)', '\dot\theta (rad/s)'};
+state_labels = {'x_c (m)', 'v_c (m/s)', '\theta (rad)', '\omega (rad/s)'};
 colors = lines(4);
 for i = 1:4
     ei = zeros(4,1); ei(i) = 1;
@@ -277,7 +276,7 @@ grid on;
 
 % ── 7d. lambda_min(S(t)) ──
 subplot(2,2,4);
-plot(t_fine, lmin_S, 'm-', 'LineWidth', 1.5);
+plot(t_fine, eig_min_S, 'm-', 'LineWidth', 1.5);
 xlabel('Time (s)'); ylabel('\lambda_{min}(S(t))');
 title('Minimum Eigenvalue of S(t)');
 grid on;
