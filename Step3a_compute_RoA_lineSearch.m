@@ -1,3 +1,6 @@
+clc; clearvars; close all;
+compute_roa();
+
 % =========================================================================
 %  compute_roa.m
 %  Region of Attraction computation for cart-pole LQR controller
