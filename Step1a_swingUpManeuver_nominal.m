@@ -1,5 +1,4 @@
 clc; clearvars; close all;
-
 params = init_params();
 
 %% Compute nominal trajectory and associated nominal control
@@ -34,7 +33,7 @@ function params = init_params()
     params.x0 = [0; 0; 0; 0];
     params.xf = [0; 0; pi; 0];
     
-    % LQR gains
+    % LQR gains for attractor at top
     params.Q = diag([10, 1, 100, 1]);
     params.R = 0.5;
 
