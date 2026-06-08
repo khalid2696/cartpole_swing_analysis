@@ -32,7 +32,7 @@ function params = init_params()
     % Initial and Final Centers
     params.x0 = [0; 0; pi; 0];
     params.xf = [0; 0; 0; 0];
-    % Set definitions (Ellipsoid S-matrices)
+    % LQR gains
     params.Q = diag([10, 1, 100, 1]);
     params.R = 5;
 
