@@ -2,7 +2,8 @@ clc; clearvars; close all;
 addpath('./lib/');
 
 %% Analyze LQR attraction behavior
-params = init_params('bottom'); %OPTIONS: 'top' or 'bottom'
+% params = init_params('top', 25.850046); %OPTIONS: 'top' or 'bottom'
+params = init_params('bottom', 57.567173); %OPTIONS: 'top' or 'bottom'
 x_init = sample_points_from_ellipsoid(params.initial_set_matrix, params.xf, 1, 'boundary'); %OPTIONS: 'interior' or 'boundary'
 [t_nom, x_nom, u_nom] = analyze_trajectory_and_input(params, x_init);
 
@@ -12,7 +13,7 @@ function [t_nom, x_nom, u_nom] = analyze_trajectory_and_input(params, x_init)
     tspan = params.tspan;
 
     % Energy Shaping Controller
-    ctrl = @(t, x) LQR_attractor_at_top(x, params);
+    ctrl = @(t, x) LQR_attractor(x, params);
     
     options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
     [t_nom, x_nom] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), tspan, x_init, options);
@@ -24,14 +25,14 @@ function [t_nom, x_nom, u_nom] = analyze_trajectory_and_input(params, x_init)
     end
 end
 
-function u = LQR_attractor_at_top(x, params)
+function u = LQR_attractor(x, params)
 
     K = params.gains.K;
     u = K*(params.xf - x);
     u = max(min(u, params.F_max), -params.F_max);
 end
 
-function params = init_params(mode)
+function params = init_params(mode, RoA_scaling)
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
     params.tspan = [0 15]; % 6 seconds for a "gentle" swing up
@@ -55,10 +56,7 @@ function params = init_params(mode)
     % params.gains.K = 0.5*[-10.0000  -16.2819   91.7720   22.6933];
     [params.gains.K, params.S] = compute_attractor_gain(params);
 
-    params.initial_set_matrix = 0.1*params.S; %some scaling of Riccati solution
-
-    % params.initial_impulse = 3; %in N
-    % params.controller_switch_angle = 0.8*pi;
+    params.initial_set_matrix = 1/RoA_scaling*params.S; %some scaling of Riccati solution
 end
 
 function dx = cartpole_dynamics(t, x, u, params)
