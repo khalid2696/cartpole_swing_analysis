@@ -1,4 +1,4 @@
-clc; clearvars; close all
+%clc; clearvars; close all
 
 %% Add directories
 addpath('../lib/');
@@ -29,6 +29,12 @@ N = length(time_instances);
 
 %% Specify parameters or Inherit them if they exist in the wrapper file
 
+% For debugging purposes
+if exist('debugMode','var')
+    load('../precomputedData/nominal_trajectory_and_input.mat');
+    K = zeros(size(K));
+end
+
 %Specify the start time for the rollouts
 if ~exist('startTimeIndex','var')
     startTimeIndex = 1;
@@ -56,7 +62,6 @@ if ~exist('finalStateSetMatrix', 'var') || ~exist('finalStateSetCenter', 'var')
     % finalStateSetCenter = [0 0 0 0]';
     % finalStateSetMatrix = 33.1433 * eye(4); %for swing-down
 end
-
 
 %finer discretization to prevent integration error build-up
 if ~exist('upsamplingFactor','var')
