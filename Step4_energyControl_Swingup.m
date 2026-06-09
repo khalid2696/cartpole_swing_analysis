@@ -31,7 +31,7 @@ run('./utils/checkClosedLoop_MCRollouts.m');
 function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
-    params.tspan = [0 120]; % 6 seconds for a "gentle" swing up
+    params.tspan = [0 25]; % 6 seconds for a "gentle" swing up
     % Initial and Final Centers
     params.x0 = [0; 0; 0; 0];
     params.xf = [0; 0; pi; 0];
@@ -42,8 +42,7 @@ function params = init_params()
 
     %control law gains
     % params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;
-    params.gains.k_e = 20; params.gains.k_p = 0; params.gains.k_d = 0;
-    params.gains.mu = 0.5;
+    params.gains.k_e = 2; params.gains.mu = 1;   
     params.gains.K = compute_attractor_gain(params);
     params.initial_impulse = 0.1; %in N
     params.controller_switch_angle = 0.99*pi;
@@ -104,21 +103,19 @@ function u = energy_shaping_law(x, params)
     E_up = m*g*L;
     
     k_e = params.gains.k_e; mu = params.gains.mu;
-    k_p = params.gains.k_p; k_d = params.gains.k_d;
     K = params.gains.K;
 
-    % Pump energy based on velocity and position
+    % Pump energy based on states
     if abs(theta) < params.controller_switch_angle
         % u = k_e * (E - E_up) * omega * cos(theta);
         % u = k_e * (M + m*sin(theta)^2) * (E - E_up)*omega*cos(theta);
-        u = k_e * (M + m*sin(theta)^2) * (m*L*(E - E_up)*omega*cos(theta) - mu*x(2)) - ...
-            m*sin(theta) * (L*omega^2 + g*cos(theta));
+        u = k_e * (M + m*sin(theta)^2) * ((E - E_up)*omega*cos(theta) - mu*x(2)) - ...
+            m*sin(theta) * (L*omega^2 + g*cos(theta)); %exact control law considering feedback terms as well
     else
         u = K*(params.xf - x);
     end
 
-    % PD to keep cart near origin: not activated currently! (zero-gains)
-    u = u - k_p*x(1) - k_d*x(2);
+    %Apply input saturations
     u = max(min(u, params.F_max), -params.F_max);
 end
 

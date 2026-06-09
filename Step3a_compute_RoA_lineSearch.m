@@ -323,7 +323,7 @@ sgtitle(fig, ...
 
 % ── Save ─────────────────────────────────────────────────────────────────
 fname = sprintf('roa_%s', mode);
-saveas(fig, fullfile(fileparts(mfilename('fullpath')), [fname '.fig']));
+%saveas(fig, fullfile(fileparts(mfilename('fullpath')), [fname '.fig']));
 print(fig, fullfile(fileparts(mfilename('fullpath')), [fname '.png']), ...
       '-dpng', '-r300');
 fprintf('   Figure saved: %s.png\n', fname);
