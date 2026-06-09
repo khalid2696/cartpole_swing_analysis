@@ -31,20 +31,20 @@ run('./utils/checkClosedLoop_MCRollouts.m');
 function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
-    params.tspan = [0 25]; % 6 seconds for a "gentle" swing up
+    params.tspan = [0 30]; % 6 seconds for a "gentle" swing up
     % Initial and Final Centers
-    params.x0 = [0; 0; 0; 0];
-    params.xf = [0; 0; pi; 0];
+    params.x0 = [0; 0; pi; 0];
+    params.xf = [0; 0; 0; 0];
     
     % LQR gains for attractor at top
     params.Q = diag([10, 1, 100, 1]);
-    params.R = 0.5;
+    params.R = 5;
 
     %control law gains
     % params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;
-    params.gains.k_e = 2; params.gains.mu = 1;   
+    params.gains.k_e = 1; params.gains.mu = 1;   
     params.gains.K = compute_attractor_gain(params);
-    params.initial_impulse = 0.1; %in N
+    params.initial_impulse = -0.01; %in N
     params.controller_switch_threshold = 0.01*pi;
 end
 
@@ -61,8 +61,8 @@ end
 function K = compute_attractor_gain(params)
     M = params.M; m= params.m; L = params.L; g = params.g;
 
-    A = [0 1 0 0; 0 0 m*g/M 0; 0 0 0 1; 0 0 (M+m)*g/(M*L) 0];
-    B = [0; 1/M; 0; 1/(M*L)];
+    A = [0 1 0 0; 0 0 m*g/M 0; 0 0 0 1; 0 0 -(M+m)*g/(M*L) 0];
+    B = [0; 1/M; 0; -1/(M*L)];
 
     Q = params.Q;   % penalise theta heavily
     R = params.R;
@@ -90,7 +90,7 @@ end
 function u = energy_shaping_law(x, params)
     
     M = params.M; m= params.m; L = params.L; g = params.g;
-    theta = x(3); omega = x(4);
+    theta = wrapToPi(x(3)); omega = x(4);
 
     % A constant initial impulse to kickstart the energy pumping-based swing-up strategy
     if norm(x - params.x0) < 1e-3
@@ -100,16 +100,16 @@ function u = energy_shaping_law(x, params)
 
     % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
     E = 0.5*m*L^2*omega^2 - m*g*L*cos(theta);
-    E_up = m*g*L;
+    E_down = -m*g*L;
     
     k_e = params.gains.k_e; mu = params.gains.mu;
     K = params.gains.K;
 
     % Pump energy based on states
     if abs(theta - params.xf(3)) > params.controller_switch_threshold
-        % u = k_e * (E - E_up) * omega * cos(theta);
-        % u = k_e * (M + m*sin(theta)^2) * (E - E_up)*omega*cos(theta);
-        u = k_e * (M + m*sin(theta)^2) * ((E - E_up)*omega*cos(theta) - mu*x(2)) - ...
+        % u = k_e * (E - E_down) * omega * cos(theta);
+        % u = k_e * (M + m*sin(theta)^2) * (E - E_down)*omega*cos(theta);
+        u = k_e * (M + m*sin(theta)^2) * ((E - E_down)*omega*cos(theta) - mu*x(2)) - ...
             m*sin(theta) * (L*omega^2 + g*cos(theta)); %exact control law considering feedback terms as well
     else
         u = K*(params.xf - x);
@@ -135,6 +135,7 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, param
     xlabel('t (s)'); ylabel('Cart Velocity (m/s)');
     
     subplot(2,2,3); hold on; grid on;
+    x_nom(:,3) = wrapToPi(x_nom(:,3));
     plot(t_nom, rad2deg(x_nom(:,3)), 'b', 'LineWidth', 1.5);
     yline(180, 'k--', 'Upright');
     xlabel('t (s)'); ylabel('\theta (rad)');
@@ -156,14 +157,14 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, param
     % Lyapunov function and Energy over time
     % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
     E = 0.5*m*L^2*x_nom(:,4).^2 - m*g*L*cos(x_nom(:,3));
-    E_up = m*g*L;
+    E_down = -m*g*L;
 
-    V = 0.5*(E-E_up).^2 + 0.5*params.gains.mu*x_nom(:,2).^2;
+    V = 0.5*(E-E_down).^2 + 0.5*params.gains.mu*x_nom(:,2).^2;
 
     %state trajectory history
     figure;
     subplot(2,1,1); hold on; grid on;
-    plot(t_nom, (E-E_up), 'k', 'LineWidth', 1.5);
+    plot(t_nom, (E-E_down), 'k', 'LineWidth', 1.5);
     xlabel('t (s)'); ylabel('Energy difference (J)');
     
     subplot(2,1,2); hold on; grid on;
