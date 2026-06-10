@@ -6,10 +6,11 @@ params = init_params();
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, params);
 
+keyboard
+
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
 save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
 
-keyboard
 % %% Compute a stabilizing TVLQR feedback controller
 % % Load the nominal trajectory and feedforward control, and 
 % load('./precomputedData/swing_up/nominal_trajectory_and_input.mat');
@@ -77,7 +78,7 @@ function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
     % Energy Shaping Controller
     ctrl = @(t, x) energy_shaping_law(x, params);
     
-    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
+    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8, 'MaxStep', 0.001);
     [t_nom, x_nom] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), tspan, x_init, options);
     
     % Reconstruct u

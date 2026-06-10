@@ -10,17 +10,6 @@ t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
 save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
 
 keyboard
-% %% Compute a stabilizing TVLQR feedback controller
-% % Load the nominal trajectory and feedforward control, and 
-% load('./precomputedData/swing_up/nominal_trajectory_and_input.mat');
-% 
-% % Run and save only once -- after that only use stored values 
-% % Compute the TVLQR gains
-% Q = diag([10, 1, 100, 1]);   % penalise theta heavily
-% R = 0.01;
-% 
-% tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
-% save('./precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
 
 clc; clearvars; close all
 debugMode = true;
@@ -44,7 +33,8 @@ function params = init_params()
     % params.gains.k_e = 2; params.gains.k_p = 1.0; params.gains.k_d = 0.5;
     params.gains.k_e = 2; params.gains.mu = 1;   
     params.gains.K = compute_attractor_gain(params);
-    params.initial_impulse = 0.1; %in N
+    % params.initial_impulse = 0.1; %in N
+    params.initial_perturbation = 1e-3; %to kickstart the swing-up controller
     params.controller_switch_threshold = 0.01*pi;
 end
 
@@ -72,12 +62,12 @@ end
 
 function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
     tspan = params.tspan;
-    x_init = params.x0;
+    x_init = params.x0 + params.initial_perturbation*randn(size(params.x0)); %a small initial perturbation to kickstart the swing-up controller
 
     % Energy Shaping Controller
     ctrl = @(t, x) energy_shaping_law(x, params);
     
-    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
+    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8, 'MaxStep',0.001);
     [t_nom, x_nom] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), tspan, x_init, options);
     
     % Reconstruct u
@@ -92,11 +82,11 @@ function u = energy_shaping_law(x, params)
     M = params.M; m= params.m; L = params.L; g = params.g;
     theta = x(3); omega = x(4);
 
-    % A constant initial impulse to kickstart the energy pumping-based swing-up strategy
-    if norm(x - params.x0) < 1e-3
-        u = params.initial_impulse;
-        return
-    end
+    % % A constant initial impulse to kickstart the energy pumping-based swing-up strategy
+    % if norm(x - params.x0) < 1e-3
+    %     u = params.initial_impulse;
+    %     return
+    % end
 
     % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
     E = 0.5*m*L^2*omega^2 - m*g*L*cos(theta);
@@ -115,7 +105,7 @@ function u = energy_shaping_law(x, params)
         u = K*(params.xf - x);
     end
 
-    %Apply input saturations
+    % Apply input saturations
     u = max(min(u, params.F_max), -params.F_max);
 end
 
@@ -153,22 +143,22 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, param
     plot(x_nom(end,1), x_nom(end,3), 'xr', 'MarkerSize', 7, 'LineWidth', 1.5);
     title('x-\theta');
 
-    % Lyapunov function and Energy over time
-    % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
-    E = 0.5*m*L^2*x_nom(:,4).^2 - m*g*L*cos(x_nom(:,3));
-    E_up = m*g*L;
-
-    V = 0.5*(E-E_up).^2 + 0.5*params.gains.mu*x_nom(:,2).^2;
-
-    %state trajectory history
-    figure;
-    subplot(2,1,1); hold on; grid on;
-    plot(t_nom, (E-E_up), 'k', 'LineWidth', 1.5);
-    xlabel('t (s)'); ylabel('Energy difference (J)');
-    
-    subplot(2,1,2); hold on; grid on;
-    plot(t_nom, V, 'k', 'LineWidth', 1.5);
-    xlabel('t (s)'); ylabel('Lyapunov function value, V');
+    % % Lyapunov function and Energy over time
+    % % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
+    % E = 0.5*m*L^2*x_nom(:,4).^2 - m*g*L*cos(x_nom(:,3));
+    % E_up = m*g*L;
+    % 
+    % V = 0.5*(E-E_up).^2 + 0.5*params.gains.mu*x_nom(:,2).^2;
+    % 
+    % %Energy and Lyapunov function
+    % figure;
+    % subplot(2,1,1); hold on; grid on;
+    % plot(t_nom, (E-E_up), 'k', 'LineWidth', 1.5);
+    % xlabel('t (s)'); ylabel('Energy difference (J)');
+    % 
+    % subplot(2,1,2); hold on; grid on;
+    % plot(t_nom, V, 'k', 'LineWidth', 1.5);
+    % xlabel('t (s)'); ylabel('Lyapunov function value, V');
 
     % input profile
     figure; grid on; hold on
