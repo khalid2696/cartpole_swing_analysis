@@ -24,6 +24,8 @@ function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
     params.tspan = [0 20];
+    params.num_samples = 100;
+    
     % Initial and Final Centers
     params.x0 = [0; 0; pi; 0];
     params.xf = [0; 0; 0; 0];
@@ -40,14 +42,14 @@ function params = init_params()
     params.controller_switch_threshold = 0.1*pi;
 end
 
-function dx = cartpole_dynamics(t, x, u, params)
+function x_dot = cartpole_dynamics(t, x, u, params)
     s = sin(x(3)); c = cos(x(3));
     v = x(2); omega = x(4);
     denom = params.M + params.m * s^2;
     
     f2 = (u + params.m*params.L*omega^2*s + params.m*params.g*s*c) / denom;
     f4 = (-u*c - params.m*params.L*omega^2*s*c - (params.M+params.m)*params.g*s) / (params.L * denom);
-    dx = [v; f2; omega; f4];
+    x_dot = [v; f2; omega; f4];
 end
 
 function K = compute_attractor_gain(params)
@@ -63,7 +65,7 @@ function K = compute_attractor_gain(params)
 end
 
 function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
-    tspan = params.tspan;
+    tspan = linspace(params.tspan(1), params.tspan(2), params.num_samples);
     x_init = params.x0;
 
     % Energy Shaping Controller

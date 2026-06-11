@@ -9,12 +9,14 @@ visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, params);
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
 % control law function handle
 control_law_fn_handle = @(t, x) energy_shaping_law(x, params);
+dynamicsFnHandle = @(t, x) cartpole_dynamics(t, x, control_law_fn_handle, params);
 save('./precomputedData/swing_up/nominal_trajectory_and_input.mat', ...
-        "t_nom", "x_nom","u_nom","params","control_law_fn_handle");
-keyboard
+        "t_nom", "x_nom","u_nom","params","control_law_fn_handle","dynamicsFnHandle");
+
+keyboard;
 
 clc; clearvars; close all
-debugMode = true;
+analysis_mode = 'swing-up';
 run('./utils/checkClosedLoop_MCRollouts.m');
 
 %% Function definitions
@@ -23,6 +25,7 @@ function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
     params.tspan = [0 20];
+    params.num_samples = 100;
     % Initial and Final Centers
     params.x0 = [0; 0; 0; 0];
     params.xf = [0; 0; pi; 0];
@@ -40,14 +43,14 @@ function params = init_params()
     params.controller_switch_threshold = 0.01*pi;
 end
 
-function dx = cartpole_dynamics(t, x, u, params)
+function x_dot = cartpole_dynamics(t, x, u, params)
     s = sin(x(3)); c = cos(x(3));
     v = x(2); omega = x(4);
     denom = params.M + params.m * s^2;
     
     f2 = (u + params.m*params.L*omega^2*s + params.m*params.g*s*c) / denom;
     f4 = (-u*c - params.m*params.L*omega^2*s*c - (params.M+params.m)*params.g*s) / (params.L * denom);
-    dx = [v; f2; omega; f4];
+    x_dot = [v; f2; omega; f4];
 end
 
 function K = compute_attractor_gain(params)
@@ -63,8 +66,14 @@ function K = compute_attractor_gain(params)
 end
 
 function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
-    tspan = params.tspan;
+    tspan = linspace(params.tspan(1), params.tspan(2), params.num_samples);
     x_init = params.x0 + params.initial_perturbation*randn(size(params.x0)); %a small initial perturbation to kickstart the swing-up controller
+
+    % initialStateSetCenter = params.x0; %centered around the nominal trajectory
+    % initialStateSetMatrix = 121.4437 * eye(4)*1000; %based on funnel-outlets (at bottom) in the library
+    % numSamples = 1;
+    % x_init = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, numSamples, 'boundary');
+
 
     % Energy Shaping Controller
     ctrl = @(t, x) energy_shaping_law(x, params);
@@ -84,11 +93,11 @@ function u = energy_shaping_law(x, params)
     M = params.M; m= params.m; L = params.L; g = params.g;
     theta = x(3); omega = x(4);
 
-    % % A constant initial impulse to kickstart the energy pumping-based swing-up strategy
-    % if norm(x - params.x0) < 1e-3
-    %     u = params.initial_impulse;
-    %     return
-    % end
+    % A constant initial impulse to kickstart the energy pumping-based swing-up strategy
+    if norm(x - params.x0) < 1e-3
+        u = params.initial_impulse;
+        return
+    end
 
     % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
     E = 0.5*m*L^2*omega^2 - m*g*L*cos(theta);
@@ -168,4 +177,59 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, param
     xlabel('t (s)'); ylabel('F (N)');
     title('Input profile');
 
+end
+
+function points = sample_points_from_ellipsoid(M, xc, N, type)
+% SAMPLE_ELLIPSE_GENERAL Samples N points from an n-dimensional ellipse
+% Define by: (x - xc)' * M * (x - xc) <= 1
+%
+% Inputs:
+%   M    - n x n symmetric positive-definite matrix
+%   xc   - n x 1 column vector representing the center of the ellipse
+%   N    - Number of points to sample (scalar integer)
+%   type - String, either 'interior' or 'boundary'
+%
+% Output:
+%   points - N x n matrix where each row is an n-dimensional sampled point
+
+    % 1. Validate inputs and dimensions
+    [n, m] = size(M);
+    if n ~= m || any(eig(M) <= 0)
+        error('M must be a square, symmetric positive-definite matrix.');
+    end
+    
+    xc = xc(:); % Ensure xc is a column vector
+    if length(xc) ~= n
+        error('Dimensions of M and xc must match.');
+    end
+    
+    type = lower(type);
+    if ~strcmp(type, 'interior') && ~strcmp(type, 'boundary')
+        error('Type must be either ''interior'' or ''boundary''.');
+    end
+
+    % 2. Compute Cholesky decomposition of the inverse matrix
+    % M^-1 = L * L' -> L maps a unit hypersphere to the target hyper-ellipse
+    Minv = inv(M);
+    L = chol(Minv, 'lower');
+
+    % 3. Generate random points on an n-dimensional unit hypersphere surface
+    % Standard normal distributions yield uniformly distributed directions
+    z = randn(N, n); 
+    norms = sqrt(sum(z.^2, 2));
+    u_surface = z ./ norms; % Project points onto the exact surface (norm = 1)
+
+    % 4. Apply radial scaling based on selection type
+    if strcmp(type, 'interior')
+        % In n-dimensions, volume scales with r^n.
+        % To keep density uniform, we take the n-th root of a uniform variable.
+        r = rand(N, 1).^(1 / n);
+        u = u_surface .* r; % Scale points into the interior ball
+    else
+        u = u_surface; % Keep points on the exact boundary sphere
+    end
+
+    % 5. Transform unit ball/sphere points to the final hyper-ellipse
+    % Transposed math: points = (L * u')' + xc' -> points = u * L' + xc'
+    points = u * L' + xc';
 end

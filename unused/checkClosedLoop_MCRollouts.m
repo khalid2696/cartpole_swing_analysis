@@ -1,0 +1,486 @@
+%clc; clearvars; close all
+
+%% Add directories
+addpath('../lib/');
+
+%% Load the nominal trajectory and LQR gains
+load('../precomputedData/swing_up/nominal_trajectory_and_input.mat');
+load('../precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat');
+
+fprintf('Running Monte Carlo rollouts for empirical analysis of the closed loop system.\nHang on..\n\n');
+%% Renaming variables to interface with the following script
+
+time_instances = t_nom;
+K = tvlqr.K;
+P = tvlqr.S;
+dynamicsFnHandle = @(x,u) cartpole_dynamics(x, u, params);
+
+%%
+N = length(time_instances);
+
+% -- Status message: Quantities at our disposal now -- %
+
+% time_instances   : time horizon (sampled)        : 1 x N
+% x_nom            : nominal state trajectory      : n_x x N
+% u_nom            : nominal input tape            : n_u x N
+% K                : Feedback gains (sampled)      : n_u x n_x x N
+% P                : cost-to-goal matrix (sampled) : n_x x n_x x N
+% dynamicsFnHandle : the function handle of the system dynamics
+
+%% Specify parameters or Inherit them if they exist in the wrapper file
+
+% For debugging purposes
+if exist('debugMode','var')
+    load('../precomputedData/nominal_trajectory_and_input.mat');
+    K = zeros(size(K));
+end
+
+%Specify the start time for the rollouts
+if ~exist('startTimeIndex','var')
+    startTimeIndex = 1;
+end
+
+if ~exist('numSamples','var')
+    numSamples = 1000; %default number of rollouts
+end
+
+%Sampling initial states from an initial ellipsoidal set
+if ~exist('initialStateSetMatrix', 'var')
+    % For swing-up:
+    initialStateSetMatrix = 121.4437 * eye(4); %for swing-up
+    
+    % % For swing-down:
+    % initialStateSetMatrix = 553.8465 * eye(4); %for swing-up
+end
+
+if ~exist('finalStateSetMatrix', 'var') || ~exist('finalStateSetCenter', 'var')
+    % For swing-up:
+    finalStateSetCenter = [0 0 pi 0]';
+    finalStateSetMatrix = 192.2777 * eye(4); %for swing-up
+    
+    % % For swing-down:
+    % finalStateSetCenter = [0 0 0 0]';
+    % finalStateSetMatrix = 33.1433 * eye(4); %for swing-down
+end
+
+%finer discretization to prevent integration error build-up
+if ~exist('upsamplingFactor','var')
+    upsamplingFactor = 1;
+end
+
+%% Upsample trajectories and matrices for forward rollouts
+
+Nd = N*upsamplingFactor; % number of interpolated points
+startTimeIndex = (startTimeIndex-1)*upsamplingFactor + 1;
+
+% Fine time vector for interpolation: upsampled spacing
+t_fine = linspace(time_instances(1), time_instances(end), Nd);
+
+[x_nom, u_nom] = upsample_state_control_trajectories(time_instances, x_nom, u_nom, t_fine);
+
+P = upsample_matrix(P, time_instances, t_fine);
+K = upsample_matrix(K, time_instances, t_fine);
+
+time_instances = t_fine;
+
+%% Monte Carlo forward rollouts
+
+Ts = (time_instances(end)-time_instances(1))/(length(time_instances)-1); %sampling-time
+
+rollout_time_horizon = time_instances(startTimeIndex:end);
+rollout_x_nom = x_nom(:,startTimeIndex:end);
+rollout_u_nom = u_nom(:,startTimeIndex:end);
+rollout_K     = K(:,:,startTimeIndex:end);
+rollout_P     = P(:,:,startTimeIndex:end);
+
+%sample initial states at random
+initialStateSetCenter = rollout_x_nom(:,1); %centered around the nominal trajectory
+initialStates = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, numSamples, 'interior');
+%Two options: 'interior' and 'boundary'
+
+trajectories = cell(numSamples, 1);
+inputProfiles = cell(numSamples, 1);
+
+errors = zeros(numSamples, length(rollout_time_horizon));
+costs = zeros(numSamples, length(rollout_time_horizon));
+
+success = NaN(numSamples,1);
+
+for i = 1:numSamples
+    x0 = initialStates(i, :);
+    %options: Euler, trapezoidal, RK4, (inbuilt) ode15s
+    [x_traj, total_input, error, cost] = ...
+        forward_propagate(dynamicsFnHandle, params, x0, rollout_x_nom, rollout_u_nom, ...
+                            rollout_K, rollout_P, rollout_time_horizon, Ts, 'rk4');
+    trajectories{i} = x_traj;
+    inputProfiles{i} = total_input;
+    errors(i, :) = error;
+    costs(i, :) = cost;
+
+    % Compute the success of being within the user-specified terminal set
+    success(i) = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix);
+end
+
+successRate = mean(success);
+disp('-- End of Monte Carlo forward rollouts --');
+disp(' ');
+
+%% Visualization
+disp('Plotting trajectories, input profiles, and metrics from MC rollouts..');
+disp(' ');
+
+%plot state trajectories
+projectionDims = [1 3]; 
+plot_xy_trajectories(trajectories, rollout_x_nom, initialStateSetMatrix, x_nom, projectionDims);
+plot_terminal_set(finalStateSetCenter, finalStateSetMatrix, projectionDims);
+title(compose('Monte Carlo Rollouts, Success rate = %.2f from %d samples', successRate, numSamples));
+
+%Plot input profile
+plot_input_profiles(inputProfiles, rollout_time_horizon, u_nom, time_instances);
+% plot_error_metrics(errors, costs, rollout_time_horizon);
+
+fprintf("Success rate of final state being within the specified terminal set is %.2f (from %d MC rollouts)\n",successRate,numSamples);
+%% Function defintions
+
+% Define the system dynamics: cartpole
+% x = [p_x; v_x; theta; theta_dot]
+% u = F
+function f = cartpole_dynamics(x, u, cartPoleParameters)
+    % Numerical evaluation of cartpole dynamics  
+    
+    %extract parameters
+    M = cartPoleParameters.M; m = cartPoleParameters.m;
+    L = cartPoleParameters.L; g = cartPoleParameters.g;
+
+    % Extract states
+    p_x = x(1);
+    v_x = x(2);
+    theta = x(3);
+    omega = x(4);
+    
+    % Control input
+    F = u;
+    
+    % Define trigonometric functions
+    s_theta = sin(theta);
+    c_theta = cos(theta);
+    
+    % Common denominator
+    denom = M + m*s_theta^2;
+    
+    % State derivatives
+    f = [
+        v_x;
+        (F + m*L*omega^2*s_theta + m*g*s_theta*c_theta) / denom;
+        omega;
+        (-F*c_theta - m*L*omega^2*s_theta*c_theta - (M + m)*g*s_theta) / (L * denom)
+    ];
+end
+
+function [x_traj, total_input, errorNorm, costToGoal] = forward_propagate(dynamics, params, x0, x_nom, u_nom, K, P, time, dt, method)
+    
+    %actuator saturation
+    force_limits = [-params.F_max, params.F_max];
+
+    % Simulates the unicycle dynamics under TVLQR control
+    x_traj = zeros(size(x_nom));
+    x_traj(:, 1) = x0;
+    total_input = zeros(size(u_nom));
+
+    errorNorm = zeros(1, length(time));
+    costToGoal = zeros(1, length(time));
+    
+    for k = 1:length(time)-1
+        u_k = u_nom(:, k) - K(:, :, k) * (x_traj(:, k) - x_nom(:, k));
+        u_k = min(max(u_k, force_limits(1)), force_limits(2));
+
+        % Propagate dynamics
+        if strcmpi(method,'Euler')
+            %Simpler Euler integration -- for speed
+            dx = dynamics(x_traj(:, k), u_k);
+            x_traj(:, k+1) = x_traj(:, k) + dt * dx;
+        elseif strcmpi(method,'trapezoidal')
+            % Trapezoidal integration -- for accuracy and speed
+            dx1 = dynamics(x_traj(:, k), u_k);               % Slope at start of interval
+            x_temp = x_traj(:, k) + dt * dx1;                         % Euler step for estimation
+            dx2 = dynamics(x_temp, u_k);                     % Slope at end of interval
+            x_traj(:, k+1) = x_traj(:, k) + (dt / 2) * (dx1 + dx2);   % Trapezoidal integration
+        elseif strcmpi(method,'RK4')
+            %RK4 integration
+            %disp('RK4');
+            k1 = dynamics(x_traj(:, k), u_k); 
+            k2 = dynamics(x_traj(:, k) + 0.5 * dt * k1, u_k);
+            k3 = dynamics(x_traj(:, k) + 0.5 * dt * k2, u_k);
+            k4 = dynamics(x_traj(:, k) + dt * k3, u_k);
+            x_traj(:, k+1) = x_traj(:, k) + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4); % Update state
+        else %just use the in-built ode15s (slower but accurate)
+            [~, x_next] = ode45(@(t, x) dynamics(x, u_k), [0, dt], x_traj(:, k));
+            x_traj(:, k+1) = x_next(end, :)';
+        end
+
+        %x_traj(3,k+1) = wrapTo2Pi(x_traj(3,k+1)); %wrap angle to 2pi
+        %x_traj(3,k+1) = wrapToPi(x_traj(3,k+1)); %wrap angle to -pi, pi
+    
+        % Compute error and cost metrics
+        stateDeviation = x_traj(:, k) - x_nom(:, k);
+        errorNorm(k) = norm(stateDeviation);
+        costToGoal(k) = stateDeviation' * P(:, :, k) * stateDeviation;
+        total_input(:,k) = u_k;
+    end
+    
+    total_input(:,end) = u_nom(:,end);
+    finalStateDeviation = x_traj(:, end) - x_nom(:, end);
+    errorNorm(end) = norm(finalStateDeviation);
+    costToGoal(end) = finalStateDeviation' * P(:, :, end) * finalStateDeviation;
+end
+
+function points = sample_points_from_ellipsoid(M, xc, N, type)
+% SAMPLE_ELLIPSE_GENERAL Samples N points from an n-dimensional ellipse
+% Define by: (x - xc)' * M * (x - xc) <= 1
+%
+% Inputs:
+%   M    - n x n symmetric positive-definite matrix
+%   xc   - n x 1 column vector representing the center of the ellipse
+%   N    - Number of points to sample (scalar integer)
+%   type - String, either 'interior' or 'boundary'
+%
+% Output:
+%   points - N x n matrix where each row is an n-dimensional sampled point
+
+    % 1. Validate inputs and dimensions
+    [n, m] = size(M);
+    if n ~= m || any(eig(M) <= 0)
+        error('M must be a square, symmetric positive-definite matrix.');
+    end
+    
+    xc = xc(:); % Ensure xc is a column vector
+    if length(xc) ~= n
+        error('Dimensions of M and xc must match.');
+    end
+    
+    type = lower(type);
+    if ~strcmp(type, 'interior') && ~strcmp(type, 'boundary')
+        error('Type must be either ''interior'' or ''boundary''.');
+    end
+
+    % 2. Compute Cholesky decomposition of the inverse matrix
+    % M^-1 = L * L' -> L maps a unit hypersphere to the target hyper-ellipse
+    Minv = inv(M);
+    L = chol(Minv, 'lower');
+
+    % 3. Generate random points on an n-dimensional unit hypersphere surface
+    % Standard normal distributions yield uniformly distributed directions
+    z = randn(N, n); 
+    norms = sqrt(sum(z.^2, 2));
+    u_surface = z ./ norms; % Project points onto the exact surface (norm = 1)
+
+    % 4. Apply radial scaling based on selection type
+    if strcmp(type, 'interior')
+        % In n-dimensions, volume scales with r^n.
+        % To keep density uniform, we take the n-th root of a uniform variable.
+        r = rand(N, 1).^(1 / n);
+        u = u_surface .* r; % Scale points into the interior ball
+    else
+        u = u_surface; % Keep points on the exact boundary sphere
+    end
+
+    % 5. Transform unit ball/sphere points to the final hyper-ellipse
+    % Transposed math: points = (L * u')' + xc' -> points = u * L' + xc'
+    points = u * L' + xc';
+end
+
+% Outputs 1 if final state of rollout trajectory is within the user-specified terminal set
+function success = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix)
+    if (x_traj(:,end) - finalStateSetCenter)' * finalStateSetMatrix * (x_traj(:,end) - finalStateSetCenter) < 1
+        success = 1;
+    else
+        success = 0;
+    end
+
+end
+
+%Interpolates state and control vectors
+function [x_fine, u_fine, t_fine] = upsample_state_control_trajectories(t_coarse, x_coarse, u_coarse, t_fine)
+
+    % Dimensions
+    Nd = length(t_fine); n = size(x_coarse, 1); m = size(u_coarse, 1);
+
+    % Preallocate outputs
+    x_fine = zeros(n, Nd);
+    u_fine = zeros(m, Nd);
+
+    % Interpolate each row (dimension) of x with cubic spline
+    for i = 1:n
+        x_fine(i, :) = interp1(t_coarse, x_coarse(i, :), t_fine, 'pchip'); % Cubic interpolation
+    end
+
+    % Interpolate each row (dimension) of u with linear interpolation
+    for i = 1:m
+        u_fine(i, :) = interp1(t_coarse, u_coarse(i, :), t_fine, 'pchip'); % Linear interpolation
+    end
+end
+
+%Interpolates an input matrix
+function M_fine = upsample_matrix(M_coarse, t_coarse, t_fine)
+    % M_coarse: d1 × d2 × N
+    % t_coarse: 1 × N
+    % t_fine  : 1 × Nd (time vector corresponding to upsampling)
+    
+    [dim1, dim2, ~] = size(M_coarse); N_fine = length(t_fine);
+    
+    M_fine = zeros(dim1, dim2, N_fine);
+    for i = 1:dim1
+        for j = 1:dim2
+            M_fine(i, j, :) = interp1(t_coarse, squeeze(M_coarse(i, j, :)), t_fine, 'linear');
+        end
+    end
+end
+
+function plot_xy_trajectories(trajectories, rollout_x_nom, initialSet, complete_x_nom, projectionDims)
+    % Plot all trajectories and nominal trajectory
+    figure; hold on; grid on; axis equal;
+    
+    P = plottingFnsClass();
+
+    if nargin < 5
+        projectionDims = [1 3];
+    end
+ 
+    plot(rollout_x_nom(projectionDims(1), :), rollout_x_nom(projectionDims(2), :), 'k--', 'LineWidth', 2);
+
+    for i = 1:length(trajectories)
+        plot(trajectories{i}(projectionDims(1), :), trajectories{i}(projectionDims(2), :), 'b-', 'LineWidth', 0.5);
+        plot(trajectories{i}(projectionDims(1), 1), trajectories{i}(projectionDims(2), 1), 'sg');
+    end
+    
+    plot(complete_x_nom(projectionDims(1), :), complete_x_nom(projectionDims(2), :), 'k--', 'LineWidth', 2);
+    
+    %plot initial sampling set
+    projected_ellipse_center = [rollout_x_nom(projectionDims(1),1), rollout_x_nom(projectionDims(2),1)]';
+    projected_inlet = P.project_ellipsoid_matrix_2D(initialSet, projectionDims); % Extract 2D covariance
+    [eig_vec, eig_val] = eig(projected_inlet);
+    
+    theta = linspace(0, 2*pi, 100);
+    ellipse_boundary = eig_val^(-1/2) * [cos(theta); sin(theta)];
+    rotated_ellipse = eig_vec * ellipse_boundary;
+    
+    plot(projected_ellipse_center(1) + rotated_ellipse(1, :), ...
+         projected_ellipse_center(2) + rotated_ellipse(2, :), ...
+         'm-.', 'LineWidth', 1.5);
+
+    xlabel(['x_{', num2str(projectionDims(1)), '}'])
+    ylabel(['x_{', num2str(projectionDims(2)), '}'])
+
+    legend('Nominal Trajectory','Rollout Trajectories','Sampled Initial states','Location','best');
+    %hold off;
+end
+
+function plot_terminal_set(center, ellipsoidMatrix, projectionDims)
+ 
+    P = plottingFnsClass();
+
+    projected_ellipse_center = [center(projectionDims(1)), center(projectionDims(2))]';
+    projected_matrix = P.project_ellipsoid_matrix_2D(ellipsoidMatrix, projectionDims); % Extract 2D covariance
+    [eig_vec, eig_val] = eig(projected_matrix);
+    
+    theta = linspace(0, 2*pi, 100);
+    ellipse_boundary = eig_val^(-1/2) * [cos(theta); sin(theta)];
+    rotated_ellipse = eig_vec * ellipse_boundary;
+    
+    plot(projected_ellipse_center(1) + rotated_ellipse(1, :), ...
+         projected_ellipse_center(2) + rotated_ellipse(2, :), ...
+         'r-', 'LineWidth', 1.5, 'DisplayName', 'Terminal Set');
+    plot(projected_ellipse_center(1), projected_ellipse_center(2), 'xk','MarkerSize',5, 'DisplayName', 'Terminal State');
+end
+
+function plot_state_trajectories(trajectories, rollout_time_instances, rollout_x_nom, stateDims)
+    
+    if nargin < 4
+        stateDims = [1 2 3];
+    end
+
+    % Plot all trajectories
+    figure; %hold on; grid on; axis equal;
+
+    for j = 1:length(stateDims)
+        subplot(length(stateDims), 1, j);
+
+        hold on; grid on;
+
+        for i = 1:length(trajectories)
+            plot(rollout_time_instances, trajectories{i}(stateDims(j), :), 'b-', 'LineWidth', 0.5);
+        end
+    
+        plot(rollout_time_instances, rollout_x_nom(stateDims(j), :), 'k--', 'LineWidth', 2);
+
+        xlabel('time [s]');
+        ylabel(['x_{', num2str(stateDims(j)), '}'])
+    end
+
+    sgtitle('Monte Carlo Rollout Trajectories');
+end
+
+
+function plot_input_profiles(input_profiles, rollout_time_instances, complete_u_nom, complete_time_instances)
+    % Plot all trajectories and nominal trajectory
+    figure;
+    
+    m = size(complete_u_nom,1);
+    for i=1:m
+        subplot(m,1,i)
+        hold on; grid on; 
+        for j = 1:length(input_profiles)
+            plot(rollout_time_instances, input_profiles{j}(i, :), 'b-', 'LineWidth', 0.5);
+        end
+        plot(complete_time_instances, complete_u_nom(i, :), 'k--', 'LineWidth', 2);
+        xlabel('time'); ylabel(sprintf('u_{%d}', i))
+
+        if i==1
+            title('Input history from Monte Carlo Rollouts');
+        end
+    end
+end
+
+% Plot error and cost metrics over time
+function plot_error_metrics(errors, costs, time)
+    
+    figure;
+    
+    %error-norm
+    subplot(2, 1, 1);
+    hold on
+    
+    % Calculate upper and lower bounds of data spread
+    upper_bound = mean(errors, 1) + std(errors,1);
+    lower_bound = mean(errors, 1) - std(errors,1);
+
+    % Plot the shaded std dev region
+    fill([time, fliplr(time)], [upper_bound, fliplr(lower_bound)], ...
+        [0.8, 0.8, 1], 'EdgeColor', 'none', 'FaceAlpha', 0.5); % Shaded region
+    
+    %Plot the mean
+    plot(time, mean(errors, 1), 'r-', 'LineWidth', 2);
+    grid on;
+    xlim([0 time(end)+0.5]);
+    xlabel('Time (s)'); ylabel('Error Norm');
+    title('Mean of Error Norm Over Time');
+    
+
+    %cost-to-goal metric (weighted with P_k)
+    subplot(2, 1, 2);
+    hold on
+    
+    % Calculate upper and lower bounds of data spread
+    upper_bound = mean(costs, 1) + std(costs,1);
+    lower_bound = mean(costs, 1) - std(costs,1);
+    % Plot the shaded std dev region
+    fill([time, fliplr(time)], [upper_bound, fliplr(lower_bound)], ...
+        [0.8, 0.8, 1], 'EdgeColor', 'none', 'FaceAlpha', 0.4); % Shaded region
+    
+    %Plot the mean
+    plot(time, mean(costs, 1), 'b-', 'LineWidth', 2);
+    grid on;
+    xlim([0 time(end)+0.5]);
+    xlabel('Time (s)'); ylabel('Weighted Cost');
+    title('Mean of Cost-to-Goal Metric Over Time');
+end
