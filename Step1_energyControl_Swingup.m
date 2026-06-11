@@ -7,8 +7,10 @@ params = init_params();
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, params);
 
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
-save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
-
+% control law function handle
+control_law_fn_handle = @(t, x) energy_shaping_law(x, params);
+save('./precomputedData/swing_up/nominal_trajectory_and_input.mat', ...
+        "t_nom", "x_nom","u_nom","params","control_law_fn_handle");
 keyboard
 
 clc; clearvars; close all
@@ -20,7 +22,7 @@ run('./utils/checkClosedLoop_MCRollouts.m');
 function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
-    params.tspan = [0 25]; % 6 seconds for a "gentle" swing up
+    params.tspan = [0 20];
     % Initial and Final Centers
     params.x0 = [0; 0; 0; 0];
     params.xf = [0; 0; pi; 0];

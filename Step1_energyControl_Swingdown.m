@@ -6,22 +6,13 @@ params = init_params();
 
 visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, params);
 
-keyboard
-
 t_nom = t_nom'; x_nom = x_nom'; u_nom = u_nom';
-save('./precomputedData/nominal_trajectory_and_input.mat',"t_nom", "x_nom","u_nom","params");
+% control law function handle
+control_law_fn_handle = @(t, x) energy_shaping_law(x, params);
+save('./precomputedData/swing_down/nominal_trajectory_and_input.mat', ...
+        "t_nom", "x_nom","u_nom","params","control_law_fn_handle");
 
-% %% Compute a stabilizing TVLQR feedback controller
-% % Load the nominal trajectory and feedforward control, and 
-% load('./precomputedData/swing_up/nominal_trajectory_and_input.mat');
-% 
-% % Run and save only once -- after that only use stored values 
-% % Compute the TVLQR gains
-% Q = diag([10, 1, 100, 1]);   % penalise theta heavily
-% R = 0.01;
-% 
-% tvlqr = computeTVLQR(t_nom, x_nom, u_nom, Q, R, params);
-% save('./precomputedData/swing_up/TVLQR_gains_and_cost_matrices.mat', "tvlqr")
+keyboard
 
 clc; clearvars; close all
 debugMode = true;
@@ -32,7 +23,7 @@ run('./utils/checkClosedLoop_MCRollouts.m');
 function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
-    params.tspan = [0 30]; % 6 seconds for a "gentle" swing up
+    params.tspan = [0 20];
     % Initial and Final Centers
     params.x0 = [0; 0; pi; 0];
     params.xf = [0; 0; 0; 0];
@@ -46,7 +37,7 @@ function params = init_params()
     params.gains.k_e = 1; params.gains.mu = 1;   
     params.gains.K = compute_attractor_gain(params);
     params.initial_impulse = -0.01; %in N
-    params.controller_switch_threshold = 0.01*pi;
+    params.controller_switch_threshold = 0.1*pi;
 end
 
 function dx = cartpole_dynamics(t, x, u, params)
