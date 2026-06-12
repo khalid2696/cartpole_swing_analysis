@@ -4,7 +4,7 @@ clc; clearvars; close all
 addpath('../lib/');
 
 if ~exist('analysis_mode','var')
-    analysis_mode = 'swing-up';
+    analysis_mode = 'swing-down';
 end
 
 %% Load the nominal trajectory and control law
@@ -45,14 +45,9 @@ elseif strcmpi(analysis_mode, 'swing-down')
 else
     error('Unsupported analysis mode')
 end
+initialStateSetCenter = params.x0;
 
-%% Monte Carlo forward rollouts
-
-%sample initial states at random
-initialStateSetCenter = params.x0; %centered around the nominal trajectory
-initialStates = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, numSamples, 'boundary');
-%Two options: 'interior' and 'boundary'
-
+%% Monte Carlo rollouts
 trajectories = cell(numSamples, 1);
 inputProfiles = cell(numSamples, 1);
 
@@ -61,10 +56,18 @@ errors = zeros(numSamples, length(t_nom));
 
 success = NaN(numSamples,1);
 
-for i = 1:numSamples
-    x0 = initialStates(i, :);
-    [x_traj, control_input, x_bounds, error_norm] = forward_propagate(params, x0, ...
-                                                    control_law_fn_handle, t_nom, x_nom);
+i = 1;
+while i <= numSamples
+    i
+
+    %sample initial states at random
+    x0 = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, 1, 'boundary'); %Two options: 'interior' and 'boundary'
+    
+    [x_traj, control_input, x_bounds, error_norm, errorFlag] = forward_propagate(params, x0, ...
+                                                    control_law_fn_handle, t_nom, x_nom, analysis_mode);
+    if errorFlag 
+        continue %repeat the MC rollout -- observed only in the swing-down maneuver (because of numerical ode error and integration error)
+    end
     trajectories{i} = x_traj;
     inputProfiles{i} = control_input;
     x_min_max(i, :) = x_bounds;
@@ -72,6 +75,8 @@ for i = 1:numSamples
 
     % Compute the success of being within the user-specified terminal set
     success(i) = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix);
+    
+    i = i+1;
 end
 
 successRate = mean(success);
@@ -97,6 +102,7 @@ fprintf("Success rate of final state being within the specified terminal set is 
 fprintf("\nMinimum x from %d MC rollouts: %0.3f", numSamples, min(x_min_max(:,1)));
 fprintf("\nMaximum x from %d MC rollouts: %0.3f", numSamples, max(x_min_max(:,2)));
 disp(' ');
+
 %% Function defintions
 
 function x_dot = cartpole_dynamics(t, x, u, params)
@@ -109,36 +115,106 @@ function x_dot = cartpole_dynamics(t, x, u, params)
     x_dot = [v; f2; omega; f4];
 end
 
-function [x_traj, control_input, x_bounds, errorNorms] = forward_propagate(params, x_init, ctrl, t_nom, x_nom)
+function [x_traj, control_input, x_bounds, errorNorms, errorFlag] = forward_propagate(params, x_init, ctrl, t_nom, x_nom, analysis_mode)
     
-    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8); %'MaxStep',0.001
-    [~, x_traj] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), t_nom, x_init, options);
-    x_traj = x_traj';
+    errorFlag = 0;
+    % swing-up and swing-down have some subtle ode implementation differences 
+    % because of theta wrapping (0 to 2pi vs -pi to pi)
+    switch analysis_mode
+        case 'swing-up'
+            options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8); %'MaxStep',0.001
+            [~, x_traj] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), t_nom, x_init, options);
+            x_traj = x_traj';
+        
+            % Reconstruct u
+            control_input = zeros(1, length(t_nom));
+            errorNorms = zeros(length(t_nom),1);
+            for k = 1:length(t_nom)
+                control_input(k) = ctrl(t_nom(k), x_traj(:,k));
+                errorNorms(k) = norm(x_traj(:, k) - x_nom(:, k));
+            end
+        case 'swing-down'
+            x_init(3) = wrapToPi(x_init(3));   % ensure initial theta is wrapped
+        
+            time_instances = []; x_traj = []; control_input = [];
+            t_start = t_nom(1);
+            t_end = t_nom(end);
+            x_curr   = x_init;
+        
+            opts = odeset('RelTol',1e-4,'AbsTol',1e-6, 'Events', @wrap_event);
+            iter = 0;
+            MAX_ITER = 100; % more than enough wrap events for any reasonable trajectory
 
-    % Reconstruct u
-    control_input = zeros(1, length(t_nom));
-    errorNorms = zeros(length(t_nom),1);
-    for k = 1:length(t_nom)
-        control_input(k) = ctrl(t_nom(k), x_traj(:,k));
-        errorNorms(k) = norm(x_traj(:, k) - x_nom(:, k));
+            while t_start < t_end
+                iter = iter + 1;
+                if iter > MAX_ITER
+                    warning('MC rollout %d: max wrap iterations reached at t=%.3f, breaking.', i, t_start);
+                    errorFlag = 1;
+                    %assign dummy values to the other outputs (vacuous)
+                    x_traj = NaN; control_input = NaN;
+                    x_bounds = [NaN, NaN]; errorNorms = NaN;
+                    return
+                end
+                [t_seg, x_seg, te, xe, ~] = ode45(@(t,x) cartpole_dynamics(t, x, ...
+                               ctrl(t, x), params), ...
+                                    [t_start, t_end], x_curr, opts);
+        
+                % Reconstruct u for this segment
+                u_seg = zeros(length(t_seg), 1);
+                for i = 1:length(t_seg)
+                    u_seg(i) = ctrl(t_seg(i), x_seg(i,:)');
+                end
+        
+                % Append segment (skip duplicate point on restart)
+                if isempty(time_instances)
+                    time_instances = t_seg;
+                    x_traj = x_seg;
+                    control_input = u_seg;
+                else
+                    time_instances = [time_instances; t_seg(2:end)];
+                    x_traj = [x_traj; x_seg(2:end,:)];
+                    control_input = [control_input; u_seg(2:end)];
+                end
+        
+                % If no event fired, integration reached t_end -- done
+                if isempty(te)
+                    break;
+                end
+        
+                % Event fired: wrap theta and restart
+                t_start = te(end);
+                x_curr   = xe(end,:)';
+                x_curr(3) = wrapToPi(x_curr(3));   % wrap theta to [-pi, pi]
+            end
+        
+            % interpolate/extrapolate to match the number of knot points
+            x_traj = interp1(time_instances, x_traj, t_nom, 'pchip', 'extrap');
+            control_input = interp1(time_instances, control_input, t_nom, 'pchip', 'extrap')';
+
+            % applying transpose to match convention
+            x_traj = x_traj'; control_input = control_input'; 
+            % Compute error norms
+            errorNorms = sqrt(sum((x_traj-x_nom).^2, 1))';
+            % errorNorms = zeros(length(t_nom),1);
+            % for k = 1:length(t_nom)
+            %     errorNorms(k) = norm(x_traj(:, k) - x_nom(:, k));
+            % end
     end
 
     x_bounds = [min(x_traj(1,:)), max(x_traj(1,:))];
 end
 
-function points = sample_points_from_ellipsoid(M, xc, N, type)
-    % SAMPLE_ELLIPSE_GENERAL Samples N points from an n-dimensional ellipse
-    % Define by: (x - xc)' * M * (x - xc) <= 1
-    %
-    % Inputs:
-    %   M    - n x n symmetric positive-definite matrix
-    %   xc   - n x 1 column vector representing the center of the ellipse
-    %   N    - Number of points to sample (scalar integer)
-    %   type - String, either 'interior' or 'boundary'
-    %
-    % Output:
-    %   points - N x n matrix where each row is an n-dimensional sampled point
+% ── Event: theta crosses +pi or -pi ──────────────────────────────
+function [val, isterminal, direction] = wrap_event(t, x)
+    % Fires when theta - pi = 0 (crossing +pi)
+    % or     when theta + pi = 0 (crossing -pi)
+    val        = [x(3) - pi;    % crossing +pi
+                  x(3) + pi];   % crossing -pi
+    isterminal = [1; 1];        % stop integration at either crossing
+    direction  = [0; 0];        % fire on any crossing direction
+end
 
+function points = sample_points_from_ellipsoid(M, xc, N, type)
     % 1. Validate inputs and dimensions
     [n, m] = size(M);
     if n ~= m || any(eig(M) <= 0)

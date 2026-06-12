@@ -94,8 +94,7 @@ function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
     t_end = tspan(2);
     x_curr   = x_init;
 
-    opts = odeset('RelTol',1e-6,'AbsTol',1e-8, ...
-                  'Events', @wrap_event);
+    opts = odeset('RelTol',1e-6,'AbsTol',1e-8, 'Events', @wrap_event);
 
     while t_start < t_end
 
