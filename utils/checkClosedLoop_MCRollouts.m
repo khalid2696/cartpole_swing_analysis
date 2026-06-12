@@ -30,7 +30,7 @@ N = length(t_nom);
 %% Specify parameters or Inherit them if they exist in the wrapper file
 
 if ~exist('numSamples','var')
-    numSamples = 5000; %default number of rollouts
+    numSamples = 1000; %default number of rollouts
 end
 
 %Sampling initial states from an initial ellipsoidal set

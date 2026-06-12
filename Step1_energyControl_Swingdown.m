@@ -23,8 +23,8 @@ run('./utils/checkClosedLoop_MCRollouts.m');
 function params = init_params()
     params.M = 1.0; params.m = 0.1; params.L = 0.5; params.g = 9.81;
     params.F_max = 10;
-    params.tspan = [0 20];
-    params.num_samples = 100;
+    params.tspan = [0 15];
+    params.num_knot_points = 100;
 
     % Initial and Final Centers
     params.x0 = [0; 0; pi; 0];
@@ -40,7 +40,7 @@ function params = init_params()
     params.gains.K = compute_attractor_gain(params);
     % params.initial_impulse = -0.01; %in N
     params.initial_perturbation = 1e-3; %to kickstart the swing-up controller
-    params.controller_switch_threshold = 0.25*pi;
+    params.controller_switch_threshold = 0.2*pi;
 end
 
 function x_dot = cartpole_dynamics(t, x, u, params)
@@ -66,22 +66,88 @@ function K = compute_attractor_gain(params)
     K = lqr(A,B,Q,R);
 end
 
-function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
-    tspan = linspace(params.tspan(1), params.tspan(2), params.num_samples);
-    x_init = params.x0 + params.initial_perturbation*randn(size(params.x0)); %a small initial perturbation to kickstart the swing-up controller;
+% function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
+%     tspan = linspace(params.tspan(1), params.tspan(2), params.num_knot_points);
+%     x_init = params.x0 + params.initial_perturbation*randn(size(params.x0)); %a small initial perturbation to kickstart the swing-up controller;
+% 
+%     % Energy Shaping Controller
+%     ctrl = @(t, x) energy_shaping_law(x, params);
+% 
+%     options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8, 'MaxStep', 0.001);
+%     [t_nom, x_nom] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), tspan, x_init, options);
+% 
+%     % Reconstruct u
+%     u_nom = zeros(length(t_nom), 1);
+%     for i = 1:length(t_nom)
+%         u_nom(i) = ctrl(t_nom(i), x_nom(i,:)');
+%     end
+% end
 
-    % Energy Shaping Controller
-    ctrl = @(t, x) energy_shaping_law(x, params);
-    
-    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8, 'MaxStep', 0.001);
-    [t_nom, x_nom] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), tspan, x_init, options);
-    
-    % Reconstruct u
-    u_nom = zeros(length(t_nom), 1);
-    for i = 1:length(t_nom)
-        u_nom(i) = ctrl(t_nom(i), x_nom(i,:)');
+function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
+
+    tspan  = params.tspan;
+    x_init = params.x0 + params.initial_perturbation * randn(size(params.x0));
+    x_init(3) = wrapToPi(x_init(3));   % ensure initial theta is wrapped
+
+    t_nom = []; x_nom = []; u_nom = [];
+    t_start = tspan(1);
+    t_end = tspan(2);
+    x_curr   = x_init;
+
+    opts = odeset('RelTol',1e-6,'AbsTol',1e-8, ...
+                  'Events', @wrap_event);
+
+    while t_start < t_end
+
+        [t_seg, x_seg, te, xe, ~] = ode15s(@(t,x) cartpole_dynamics(t, x, ...
+                       energy_shaping_law(x, params), params), ...
+                            [t_start, t_end], x_curr, opts);
+
+        % Reconstruct u for this segment
+        u_seg = zeros(length(t_seg), 1);
+        for i = 1:length(t_seg)
+            u_seg(i) = energy_shaping_law(x_seg(i,:)', params);
+        end
+
+        % Append segment (skip duplicate point on restart)
+        if isempty(t_nom)
+            t_nom = t_seg;
+            x_nom = x_seg;
+            u_nom = u_seg;
+        else
+            t_nom = [t_nom; t_seg(2:end)];
+            x_nom = [x_nom; x_seg(2:end,:)];
+            u_nom = [u_nom; u_seg(2:end)];
+        end
+
+        % If no event fired, integration reached t_end -- done
+        if isempty(te)
+            break;
+        end
+
+        % Event fired: wrap theta and restart
+        t_start = te(end);
+        x_curr   = xe(end,:)';
+        x_curr(3) = wrapToPi(x_curr(3));   % wrap theta to [-pi, pi]
     end
+
+    %interpolate/extrapolate to match the number of knot points
+    t_nom_temp = linspace(t_start,t_end,params.num_knot_points);
+    x_nom = interp1(t_nom, x_nom, t_nom_temp, 'pchip', 'extrap');
+    u_nom = interp1(t_nom, u_nom, t_nom_temp, 'pchip', 'extrap')';
+    t_nom = t_nom_temp';
 end
+
+% ── Event: theta crosses +pi or -pi ──────────────────────────────
+function [val, isterminal, direction] = wrap_event(t, x)
+    % Fires when theta - pi = 0 (crossing +pi)
+    % or     when theta + pi = 0 (crossing -pi)
+    val        = [x(3) - pi;    % crossing +pi
+                  x(3) + pi];   % crossing -pi
+    isterminal = [1; 1];        % stop integration at either crossing
+    direction  = [0; 0];        % fire on any crossing direction
+end
+
 
 function u = energy_shaping_law(x, params)
     
