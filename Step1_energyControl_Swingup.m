@@ -69,12 +69,6 @@ function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
     tspan = linspace(params.tspan(1), params.tspan(2), params.num_samples);
     x_init = params.x0 + params.initial_perturbation*randn(size(params.x0)); %a small initial perturbation to kickstart the swing-up controller
 
-    % initialStateSetCenter = params.x0; %centered around the nominal trajectory
-    % initialStateSetMatrix = 121.4437 * eye(4)*1000; %based on funnel-outlets (at bottom) in the library
-    % numSamples = 1;
-    % x_init = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, numSamples, 'boundary');
-
-
     % Energy Shaping Controller
     ctrl = @(t, x) energy_shaping_law(x, params);
     

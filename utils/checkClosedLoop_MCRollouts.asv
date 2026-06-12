@@ -30,7 +30,7 @@ N = length(t_nom);
 %% Specify parameters or Inherit them if they exist in the wrapper file
 
 if ~exist('numSamples','var')
-    numSamples = 5000; %default number of rollouts
+    numSamples = 1000; %default number of rollouts
 end
 
 %Sampling initial states from an initial ellipsoidal set
@@ -93,10 +93,6 @@ plot_input_profiles(inputProfiles, u_nom, t_nom);
 plot_error_metrics(errors, t_nom);
 
 fprintf("Success rate of final state being within the specified terminal set is %.2f (from %d MC rollouts)\n",successRate,numSamples);
-
-fprintf("\nMinimum x from %d MC rollouts: %0.3f", numSamples, min(x_min_max(:,1)));
-fprintf("\nMaximum x from %d MC rollouts: %0.3f", numSamples, max(x_min_max(:,2)));
-disp(' ');
 %% Function defintions
 
 function x_dot = cartpole_dynamics(t, x, u, params)
