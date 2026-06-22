@@ -1,4 +1,4 @@
-clc; clearvars; close all
+% clc; clearvars; close all
 
 %% Add directories
 addpath('../lib/');
@@ -56,9 +56,9 @@ errors = zeros(numSamples, length(t_nom));
 
 success = NaN(numSamples,1);
 
-i = 1;
-while i <= numSamples
-    i
+rollout_count = 1;
+while rollout_count <= numSamples
+    rollout_count
 
     %sample initial states at random
     x0 = sample_points_from_ellipsoid(initialStateSetMatrix, initialStateSetCenter, 1, 'boundary'); %Two options: 'interior' and 'boundary'
@@ -68,15 +68,15 @@ while i <= numSamples
     if errorFlag 
         continue %repeat the MC rollout -- observed only in the swing-down maneuver (because of numerical ode error and integration error)
     end
-    trajectories{i} = x_traj;
-    inputProfiles{i} = control_input;
-    x_min_max(i, :) = x_bounds;
-    errors(i, :) = error_norm;
+    trajectories{rollout_count} = x_traj;
+    inputProfiles{rollout_count} = control_input;
+    x_min_max(rollout_count, :) = x_bounds;
+    errors(rollout_count, :) = error_norm;
 
     % Compute the success of being within the user-specified terminal set
-    success(i) = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix);
+    success(rollout_count) = isContained(x_traj, finalStateSetCenter, finalStateSetMatrix);
     
-    i = i+1;
+    rollout_count = rollout_count+1;
 end
 
 successRate = mean(success);
@@ -99,8 +99,9 @@ plot_error_metrics(errors, t_nom);
 
 fprintf("Success rate of final state being within the specified terminal set is %.2f (from %d MC rollouts)\n",successRate,numSamples);
 
-fprintf("\nMinimum x from %d MC rollouts: %0.3f", numSamples, min(x_min_max(:,1)));
-fprintf("\nMaximum x from %d MC rollouts: %0.3f", numSamples, max(x_min_max(:,2)));
+minmaxBounds = [min(x_min_max(:,1)), max(x_min_max(:,2))];
+fprintf("\nMinimum x from %d MC rollouts: %0.3f", numSamples, minmaxBounds(1));
+fprintf("\nMaximum x from %d MC rollouts: %0.3f", numSamples, minmaxBounds(2));
 disp(' ');
 
 %% Function defintions

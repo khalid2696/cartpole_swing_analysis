@@ -15,8 +15,11 @@ save('./precomputedData/swing_down/nominal_trajectory_and_input.mat', ...
 keyboard
 
 clc; clearvars; close all
-analysis_mode = 'swing-down';
+analysis_mode = 'swing-down'; numSamples = 1000;
 run('./utils/checkClosedLoop_MCRollouts.m');
+
+% Add empirically-observed min-max bounds to the file
+save('./precomputedData/swing_down/nominal_trajectory_and_input.mat', "minmaxBounds", "numSamples", '-append');
 
 %% Function definitions
 
@@ -65,23 +68,6 @@ function K = compute_attractor_gain(params)
 
     K = lqr(A,B,Q,R);
 end
-
-% function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
-%     tspan = linspace(params.tspan(1), params.tspan(2), params.num_knot_points);
-%     x_init = params.x0 + params.initial_perturbation*randn(size(params.x0)); %a small initial perturbation to kickstart the swing-up controller;
-% 
-%     % Energy Shaping Controller
-%     ctrl = @(t, x) energy_shaping_law(x, params);
-% 
-%     options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8, 'MaxStep', 0.001);
-%     [t_nom, x_nom] = ode45(@(t, x) cartpole_dynamics(t, x, ctrl(t, x), params), tspan, x_init, options);
-% 
-%     % Reconstruct u
-%     u_nom = zeros(length(t_nom), 1);
-%     for i = 1:length(t_nom)
-%         u_nom(i) = ctrl(t_nom(i), x_nom(i,:)');
-%     end
-% end
 
 function [t_nom, x_nom, u_nom] = generate_nominal_trajectory_and_input(params)
 
@@ -170,7 +156,9 @@ function u = energy_shaping_law(x, params)
     if abs(theta - params.xf(3)) > params.controller_switch_threshold
         % u = k_e * (E - E_down) * omega * cos(theta);
         % u = k_e * (M + m*sin(theta)^2) * (E - E_down)*omega*cos(theta);
-        u = k_e * (M + m*sin(theta)^2) * ((E - E_down)*omega*cos(theta) - mu*x(2)) - ...
+        % u = k_e * (M + m*sin(theta)^2) * ((E - E_down)*omega*cos(theta) - mu*x(2)) - ...
+        %     m*sin(theta) * (L*omega^2 + g*cos(theta)); %exact control law considering feedback terms as well
+        u = k_e * ((E - E_down)*omega*cos(theta) - mu*x(2)) - ...
             m*sin(theta) * (L*omega^2 + g*cos(theta)); %exact control law considering feedback terms as well
     else
         u = K*(params.xf - x);
@@ -182,8 +170,6 @@ end
 
 
 function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, params)
-    
-    M = params.M; m= params.m; L = params.L; g = params.g;
 
     %state trajectory history
     figure;
@@ -215,26 +201,28 @@ function visualize_state_trajectory_and_input_history(t_nom, x_nom, u_nom, param
     plot(x_nom(end,1), x_nom(end,3), 'xr', 'MarkerSize', 7, 'LineWidth', 1.5);
     title('x-\theta');
 
-    % Lyapunov function and Energy over time
-    % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
-    E = 0.5*m*L^2*x_nom(:,4).^2 - m*g*L*cos(x_nom(:,3));
-    E_down = -m*g*L;
-
-    V = 0.5*(E-E_down).^2 + 0.5*params.gains.mu*x_nom(:,2).^2;
-
-    %state trajectory history
-    figure;
-    subplot(2,1,1); hold on; grid on;
-    plot(t_nom, (E-E_down), 'k', 'LineWidth', 1.5);
-    xlabel('t (s)'); ylabel('Energy difference (J)');
-    
-    subplot(2,1,2); hold on; grid on;
-    plot(t_nom, V, 'k', 'LineWidth', 1.5);
-    xlabel('t (s)'); ylabel('Lyapunov function value, V');
+    % % Lyapunov function and Energy over time
+    % % Energy of pendulum: E = 0.5*m*L^2*w^2 - m*g*L*cos(theta)
+    % M = params.M; m= params.m; L = params.L; g = params.g;
+    % E = 0.5*m*L^2*x_nom(:,4).^2 - m*g*L*cos(x_nom(:,3));
+    % E_down = -m*g*L;
+    % 
+    % V = 0.5*(E-E_down).^2 + 0.5*params.gains.mu*x_nom(:,2).^2;
+    % 
+    % %Lyapunov function and energy error
+    % figure;
+    % subplot(2,1,1); hold on; grid on;
+    % plot(t_nom, (E-E_down), 'k', 'LineWidth', 1.5);
+    % xlabel('t (s)'); ylabel('Energy difference (J)');
+    % 
+    % subplot(2,1,2); hold on; grid on;
+    % plot(t_nom, V, 'k', 'LineWidth', 1.5);
+    % xlabel('t (s)'); ylabel('Lyapunov function value, V');
 
     % input profile
     figure; grid on; hold on
     plot(t_nom, u_nom, 'k-.', 'LineWidth', 1.75);
+    ylim([-8, 8]);
     xlabel('t (s)'); ylabel('F (N)');
     title('Input profile');
 
